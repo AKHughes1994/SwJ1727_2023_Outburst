@@ -1,6 +1,12 @@
 # Description
 
-This repo hosts the comprehensive radio light curves of the black hole X-ray binary Swift J1727.8-1613. The data were assembled and presented in Hughes et al. in prep. As of Feb 2025, the data include 217 epochs from 7 facilities, with frequencies ranging from 0.3-300 GHz. 
+This repo hosts the analysis that I led (as a part of a large collaboration) for the 2023-2024 outburst of the black hole X-ray binary Swift J1727.8-1613.
+
+There are multiple subdirectories:
+
+
+
+The data were assembled and presented in Hughes et al. in prep. As of Feb 2025, the data include 217 epochs from 7 facilities, with frequencies ranging from 0.3-300 GHz. 
 
 This is a reasonably simple repo. The main components are: 
 
