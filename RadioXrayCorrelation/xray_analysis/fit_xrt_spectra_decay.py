@@ -189,6 +189,7 @@ def main():
     # Read in the spectral files (Grade 0 spectra)
     spectra = glob.glob('../spectra/*final.pi')
     obs_isots = []  # Observation times (ISO format)
+    exposure = []
     bin_counts = []  # Binned counts
     tot_counts = []  # Total counts
     spectral_files = []  # List of spectral files
@@ -197,9 +198,15 @@ def main():
     for spectrum in spectra:
         header = fits.getheader(spectrum, ext=1)
 
+        # Get the timing information
+        mjd_start = Time(header['DATE-OBS'], format='isot').mjd
+        mjd_end = Time(header['DATE-END'], format='isot').mjd
+        isot_mid = Time((mjd_start + mjd_end) / 2.0, format='mjd').isot
+
         # Only use spectra from the hard state (after MJD 60341)
         if Time(header['DATE-OBS'], format='isot').mjd > 60341:
-            obs_isots.append(header['DATE-OBS'])
+            obs_isots.append(isot_mid)
+            exposure.append(header['ONTIME'])
             bin_counts.append(header['COUNTGRP'])
             tot_counts.append(header['COUNTTOT'])
             spectral_files.append(spectrum)
@@ -207,6 +214,7 @@ def main():
     # Sort the spectra by observation time
     sort_index = np.argsort(obs_isots)
     obs_isots = np.array(obs_isots)[sort_index]
+    exposure = np.array(exposure)[sort_index]
     spectral_files = np.array(spectral_files)[sort_index]
     bin_counts = np.array(bin_counts)[sort_index]
     tot_counts = np.array(tot_counts)[sort_index]
@@ -262,7 +270,7 @@ def main():
             # Initialize model dictionary if it doesn't exist
             mname = model_names[mod_index]
             if mname not in xrt_dict.keys():
-                xrt_dict[mname] = {'chi2': [], 'dof': [], 'redchi2': [], 'obs_isot': [], 'obs_mjd': [], 'fitstat': []}
+                xrt_dict[mname] = {'chi2': [], 'dof': [], 'redchi2': [], 'obs_isot': [], 'obs_mjd': [], 'exposure':[], 'fitstat': []}
 
                 # Add parameter keys for each model component
                 for comp in AllModels(1).componentNames:
@@ -284,6 +292,7 @@ def main():
             # Append fit statistics and observation details
             xrt_dict[mname]['obs_isot'].append(obs_isots[k])
             xrt_dict[mname]['obs_mjd'].append(obs_mjd[k])
+            xrt_dict[mname]['exposure'].append(exposure[k])
             xrt_dict[mname]['chi2'].append(Fit.testStatistic)
             xrt_dict[mname]['dof'].append(Fit.dof)
             xrt_dict[mname]['redchi2'].append(Fit.testStatistic / Fit.dof)

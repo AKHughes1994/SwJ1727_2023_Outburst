@@ -1,4 +1,4 @@
-        """
+"""
 Script to process Swift XRT JSON data and save it as formatted text files.
 
 This script reads X-ray data from JSON files for the rise and decay phases of Swift J1727.8-1613, 
@@ -211,10 +211,10 @@ def main():
     """
     
     # Run the function with the rise JSON file    
-    write_to_txt('../SWJ1717_Files/SwiftJ1727_swift-xrt_rise.json', '../results/XRT_rise.txt', upper_limit=False)
+    write_to_txt('../results/SwiftJ1727_swift-xrt_rise.json', '../results/XRT_rise.txt', upper_limit=False)
 
     # Run the function with the decay JSON file    
-    write_to_txt('../SWJ1717_Files/SwiftJ1727_swift-xrt_decay.json', '../results/XRT_decay.txt', upper_limit=True)
+    write_to_txt('../results/SwiftJ1727_swift-xrt_decay.json', '../results/XRT_decay.txt', upper_limit=True)
 
 if __name__ == "__main__":
     main()
