@@ -6,8 +6,6 @@ This subdirectory contains data and scripts related to the light curve analysis 
 
 ### 1. **Data Files**
    - **`SWJ1727_Radio.csv`**: This file contains over 200 epochs of integrated radio flux densities collected from seven facilities. The data is crucial for analyzing the radio emission behavior during the outburst. The columns are as follows:
-     - Column 1: 
-     - 
    - **X-ray Data**:
      - **`Swift_J1727_2.0-6.0keV_gsclc.dat`**: Contains light curve data for the 2.0-6.0 keV energy range.
      - **`Swift_J1727_6.0-20.0keV_gsclc.dat`**: Contains light curve data for the 6.0-20.0 keV energy range.
