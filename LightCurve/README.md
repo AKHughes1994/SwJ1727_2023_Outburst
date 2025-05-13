@@ -1,6 +1,10 @@
 # LightCurve Subdirectory
 
-This subdirectory contains data and scripts related to the light curve analysis of the 2023-2024 outburst of the black hole X-ray binary Swift J1727.8-1613. The paper corresponding to this data is called "Comprehensive Radio Monitoring of the Black Hole X-ray Binary Swift J1727.8−1613 during its 2023–2024 Outburst" If you make use of this data please cite:
+This subdirectory contains data and scripts related to the light curve analysis of the 2023-2024 outburst of the black hole X-ray binary Swift J1727.8-1613. The paper corresponding to this data is called:
+
+Hughes et al. 2025: "Comprehensive Radio Monitoring of the Black Hole X-ray Binary Swift J1727.8−1613 during its 2023–2024 Outburst" 
+
+If you make use of this data please cite:
 
 **PLACEHOLDER**
 
