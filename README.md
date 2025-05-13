@@ -24,10 +24,10 @@ This directory contains data and analysis for the radio-X-ray correlation ("LrLx
 
 1. **X-ray analysis pipeline** (optional): 
    - All necessary files to reproduce the figures/analysis are located in the `SWJ1727_Files` directory. However, for those interested in re-running the pipeline, follow these steps:
-     a. Run `get_xrt_from_pipeline.py` (requires the Swift-tools Python API and HEASoft).
-     b. Execute `fit_xrt_spectra_rise.py` to fit the rise of the outburst.
-     c. Execute `fit_xrt_spectra_decay.py` to fit the decay of the outburst.
-     d. Run `output_xrt_txt.py` to convert JSON outputs from steps b/c into `.txt` files used in the notebook.
+        a. Run `get_xrt_from_pipeline.py` (requires the Swift-tools Python API and HEASoft).
+        b. Execute `fit_xrt_spectra_rise.py` to fit the rise of the outburst.
+        c. Execute `fit_xrt_spectra_decay.py` to fit the decay of the outburst.
+        d. Run `output_xrt_txt.py` to convert JSON outputs from steps b/c into `.txt` files used in the notebook.
 2. **X-ray and radio data**: Available in the `SWJ1727_Files` directory.
 3. **Analysis and plotting scripts**: Included in the provided Jupyter notebook(s).
 
