@@ -363,8 +363,13 @@ def main():
                     xrt_dict[mname]['lg10Flux_neg'].append(-1)
                     xrt_dict[mname]['lg10Flux_pos'].append(-1)
 
+    # Ensure the results directory exists
+    results_directory = "results"
+    if not os.path.exists(results_directory):
+        os.makedirs(results_directory)
+    
     # Save the final XRT dictionary to a JSON file
-    with open(f'../results/SwiftJ1727_swift-xrt_decay.json', 'w') as j:
+    with open(f'results/SwiftJ1727_swift-xrt_decay.json', 'w') as j:
         json.dump(xrt_dict, j, indent=4)
 
 if __name__ in "__main__":
