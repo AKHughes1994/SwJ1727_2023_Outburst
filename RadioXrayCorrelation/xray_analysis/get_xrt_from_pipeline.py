@@ -187,8 +187,8 @@ def main():
 
     # Iterate through target names, IDs, and segments to retrieve XRT products
     for k, target_name in enumerate(target_names):
-        # get_xrt_prods(target_ids[k], target_name, target_coords, segments[k], centroid=centroids[k], prod_type='lightcurve', grade=grades[k])
-        # get_xrt_prods(target_ids[k], target_name, target_coords, segments[k], centroid=centroids[k], prod_type='spectrum', grade=grades[k])
+        get_xrt_prods(target_ids[k], target_name, target_coords, segments[k], centroid=centroids[k], prod_type='lightcurve', grade=grades[k])
+        get_xrt_prods(target_ids[k], target_name, target_coords, segments[k], centroid=centroids[k], prod_type='spectrum', grade=grades[k])
         pass
 
     # Process spectral files for PyXspec spectral fitting
