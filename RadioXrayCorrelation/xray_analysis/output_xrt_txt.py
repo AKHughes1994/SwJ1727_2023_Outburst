@@ -211,10 +211,10 @@ def main():
     """
     
     # Run the function with the rise JSON file    
-    write_to_txt('../results/SwiftJ1727_swift-xrt_rise.json', '../results/XRT_rise.txt', upper_limit=False)
+    write_to_txt('results/SwiftJ1727_swift-xrt_rise.json', '../SWJ1717_Files/XRT_rise.txt', upper_limit=False)
 
     # Run the function with the decay JSON file    
-    write_to_txt('../results/SwiftJ1727_swift-xrt_decay.json', '../results/XRT_decay.txt', upper_limit=True)
+    write_to_txt('results/SwiftJ1727_swift-xrt_decay.json', '../SWJ1717_Files/XRT_decay.txt', upper_limit=True)
 
 if __name__ == "__main__":
     main()
