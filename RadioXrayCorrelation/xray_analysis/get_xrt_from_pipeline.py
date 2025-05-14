@@ -118,9 +118,9 @@ def get_xrt_prods(target_id, target_name, target_coords, segments, centroid=True
         # Download and extract files
         for obs in observations:
             pipeline_output = outdict[obs]['DataFile']
-            subprocess.run([f'rm -rf ../spectra/*{obs}*'], shell=True)
-            subprocess.run([f'wget -O ../spectra/{obs}.tar.gz {pipeline_output}'], shell=True)
-            subprocess.run([f'tar -xf ../spectra/{obs}.tar.gz -C ../spectra/'], shell=True)
+            subprocess.run([f'rm -rf spectra/*{obs}*'], shell=True)
+            subprocess.run([f'wget -O spectra/{obs}.tar.gz {pipeline_output}'], shell=True)
+            subprocess.run([f'tar -xf spectra/{obs}.tar.gz -C spectra/'], shell=True)
 
     # ~~~~~~~~~~ #
     # Lightcurve #
@@ -155,12 +155,12 @@ def get_xrt_prods(target_id, target_name, target_coords, segments, centroid=True
             exit()
 
         # Create a directory for the target and download the products
-        subprocess.run([f'rm -rf ../lightcurves/{target_id}; mkdir ../lightcurves/{target_id}'], shell=True)
-        myRequest.downloadProducts(f'../lightcurves/{target_id}')
+        subprocess.run([f'rm -rf lightcurves/{target_id}; mkdir lightcurves/{target_id}'], shell=True)
+        myRequest.downloadProducts(f'lightcurves/{target_id}')
 
         # Extract and clean up the files
-        subprocess.run([f'tar -xf ../lightcurves/{target_id}/lc.tar.gz -C ../lightcurves/{target_id}/; mv ../lightcurves/{target_id}/USERPROD*/lc/* ../lightcurves/{target_id}/.'], shell=True)
-        subprocess.run([f'rm -rf ../lightcurves/{target_id}/USERPROD*; rm -rf ../lightcurves/{target_id}/lc.tar.gz'], shell=True)
+        subprocess.run([f'tar -xf lightcurves/{target_id}/lc.tar.gz -C lightcurves/{target_id}/; mv lightcurves/{target_id}/USERPROD*/lc/* lightcurves/{target_id}/.'], shell=True)
+        subprocess.run([f'rm -rf lightcurves/{target_id}/USERPROD*; rm -rf lightcurves/{target_id}/lc.tar.gz'], shell=True)
 
 def main():
     """
@@ -168,10 +168,10 @@ def main():
     """
 
     # Make sure spectra and lightcurves directories exist
-    if not os.path.exists('../spectra'):
-        os.makedirs('../spectra')
-    if not os.path.exists('../lightcurves'):
-        os.makedirs('../lightcurves')
+    if not os.path.exists('spectra'):
+        os.makedirs('spectra')
+    if not os.path.exists('lightcurves'):
+        os.makedirs('lightcurves')
 
     # Define the Swift XRT parameters for Swift J1727.8-2609
     target_coords = [261.9318, -16.2066]
