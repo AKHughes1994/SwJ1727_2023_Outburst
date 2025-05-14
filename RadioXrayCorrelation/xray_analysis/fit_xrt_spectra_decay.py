@@ -300,7 +300,14 @@ def main():
 
             # Generate diagnostic plots
             msg(f'Fitting {spectrum_file} ({Fit.statMethod}, {plaw_frac}) on {obs_isots[k]} (MJD {obs_mjd[k]}) with chi2(dof) = {Fit.testStatistic} ({Fit.dof})')
-            plot_name = spectrum_file.replace('spectra_grade0', 'pngs').replace('spectra', 'pngs') + f'_mod_{mod_index}.png'
+            # Define the directory name
+            directory_name = "pngs"
+
+            # Check if the directory exists
+            if not os.path.exists(directory_name):
+                # If it doesn't exist, create the directory
+                os.makedirs(directory_name)
+            plot_name = spectrum_file.replace('spectra', 'pngs').replace('spectra', 'pngs') + f'_mod_{mod_index}.png'
             plot(plot_name)
 
             # Try to extract flux uncertainties
