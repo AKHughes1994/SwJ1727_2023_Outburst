@@ -25,9 +25,9 @@ Features:
 - Generates diagnostic plots for each spectrum.
 
 Usage:
-- Ensure the required spectral files are located in the `spectra/` directory.
+- Ensure the required spectral files are located in the `../spectra_grade0/` directory.
 - Run the script directly to process and fit the spectra.
-- Results are saved in `results/SwiftJ1727_swift-xrt_decay.json`.
+- Results are saved in `../results/SwiftJ1727_swift-xrt_decay.json`.
 
 """
 
@@ -54,7 +54,7 @@ def msg(txt):
     stamp = time.strftime(' %Y-%m-%d %H:%M:%S | ')
     print(stamp + txt)
 
-def plot(name):
+def plot(name, date, chi2, dof, nh):
     """
     Generate diagnostic plots for the spectral fit.
 
@@ -81,6 +81,7 @@ def plot(name):
     ax[0].set_ylabel(r'Counts/cm$^2$/sec/chan')
     ax[0].set_yscale("log")
     ax[0].set_xscale("log")
+    ax[0].set_title(f'{date}: NH = {nh:.3f} for chi2/dof = {chi2:.2f}/{dof})')
 
     ax[1].plot(chans, chi, 'g', linewidth=1)
     ax[1].axhline(0.0, ls=':', color='k')
@@ -110,6 +111,7 @@ def initialize_model(mod_index, flux_guess, plaw_frac=0.5, fix=False):
     Emin = 1.0
     Emax = 10.0
     nh = '0.268 -1'  # Weighted-average NH after allowing it to vary freely
+    # nh = '0.268,,0.0,0.0,1.0,1.0'
     gamma = '1.7,,0.0,0.0,4.0,4.0'
     Tin = '0.5,,0.05,0.05,5.0,5.0'
 
@@ -158,8 +160,8 @@ def main():
     6. Saves the results in a structured JSON file for further analysis.
 
     Outputs:
-    - Diagnostic plots saved in the `pngs/` directory.
-    - Results saved in `results/SwiftJ1727_swift-xrt_decay.json`.
+    - Diagnostic plots saved in the `../pngs/` directory.
+    - Results saved in `../results/SwiftJ1727_swift-xrt_decay.json`.
 
     Dependencies:
     - XSPEC Python bindings (PyXspec)
@@ -168,7 +170,6 @@ def main():
     - Matplotlib for plotting
     """
     # Initialize a dictionary to store spectral parameters
-    xrt_dict = {}
     model_names = {0: 'powerlaw', 1: 'diskbb', 2: 'both'}  # Model names for indexing
     skiplist = ['Emin', 'Emax', 'eMin', 'eMax']  # Parameters to skip during extraction
     Emin = 1.0  # Minimum energy for fitting (keV)
@@ -187,7 +188,7 @@ def main():
     Xset.parallel.error = 10  # Parallelize error calculations
 
     # Read in the spectral files (Grade 0 spectra)
-    spectra = glob.glob('spectra/*final.pi')
+    spectra = glob.glob('../spectra/*final.pi')
     obs_isots = []  # Observation times (ISO format)
     exposure = []
     bin_counts = []  # Binned counts
@@ -204,7 +205,7 @@ def main():
         isot_mid = Time((mjd_start + mjd_end) / 2.0, format='mjd').isot
 
         # Only use spectra from the hard state (after MJD 60341)
-        if Time(header['DATE-OBS'], format='isot').mjd > 60341:
+        if Time(header['DATE-OBS'], format='isot').mjd > Time('2024-03-29T00:00:00', format='isot').mjd and header['COUNTTOT'] > 25:
             obs_isots.append(isot_mid)
             exposure.append(header['ONTIME'])
             bin_counts.append(header['COUNTGRP'])
@@ -219,6 +220,9 @@ def main():
     bin_counts = np.array(bin_counts)[sort_index]
     tot_counts = np.array(tot_counts)[sort_index]
     obs_mjd = Time(obs_isots, format='isot').mjd  # Convert ISO times to MJD
+
+    data_arr = [[],[],[],[],[],[],[]]
+
 
     # Iterate through each spectrum to perform fitting
     for k, spectrum_file in enumerate(spectral_files):
@@ -243,7 +247,7 @@ def main():
         flux_guess = AllModels(1).pegpwrlw.norm.values[0]  # Initial flux estimate
 
         # Determine which models to fit based on fit stats
-        if Fit.statMethod == 'cstat':
+        if Fit.statMethod == 'cstat' or tot_counts[k] / 25 < 50:
             models = [0]  # Use power-law for low counts
         else:
             models = [2]  # Use combined model for sufficient counts
@@ -267,110 +271,50 @@ def main():
                 Fit.delta = delt
                 Fit.perform()
 
-            # Initialize model dictionary if it doesn't exist
-            mname = model_names[mod_index]
-            if mname not in xrt_dict.keys():
-                xrt_dict[mname] = {'chi2': [], 'dof': [], 'redchi2': [], 'obs_isot': [], 'obs_mjd': [], 'exposure':[], 'fitstat': []}
+            # msg(str(AllModels(1).pegpwrlw.PhoIndex.values[0]))
+            # msg(str(tot_counts[k]) + ' ' + str(models[0]))
 
-                # Add parameter keys for each model component
-                for comp in AllModels(1).componentNames:
-                    component = getattr(AllModels(1), comp)
-                    for par in component.parameterNames:
-                        if par not in skiplist:
-                            if par == 'norm' and comp == 'diskbb':
-                                pass
-                            else:
-                                xrt_dict[mname][par] = []
-                                xrt_dict[mname][par + '_neg'] = []
-                                xrt_dict[mname][par + '_pos'] = []
+            # Append MJD
+            data_arr[0].append(obs_mjd[k])
 
-                if mname == 'both':
-                    xrt_dict[mname]['lg10Flux'] = []
-                    xrt_dict[mname]['lg10Flux_neg'] = []
-                    xrt_dict[mname]['lg10Flux_pos'] = []
+            # Append chi2
+            data_arr[1].append(Fit.testStatistic)
+            data_arr[2].append(Fit.dof)
 
-            # Append fit statistics and observation details
-            xrt_dict[mname]['obs_isot'].append(obs_isots[k])
-            xrt_dict[mname]['obs_mjd'].append(obs_mjd[k])
-            xrt_dict[mname]['exposure'].append(exposure[k])
-            xrt_dict[mname]['chi2'].append(Fit.testStatistic)
-            xrt_dict[mname]['dof'].append(Fit.dof)
-            xrt_dict[mname]['redchi2'].append(Fit.testStatistic / Fit.dof)
-            xrt_dict[mname]['fitstat'].append(Fit.statMethod)
-
-            # Generate diagnostic plots
-            msg(f'Fitting {spectrum_file} ({Fit.statMethod}, {plaw_frac}) on {obs_isots[k]} (MJD {obs_mjd[k]}) with chi2(dof) = {Fit.testStatistic} ({Fit.dof})')
-            # Define the directory name
-            directory_name = "pngs"
-
-            # Check if the directory exists
-            if not os.path.exists(directory_name):
-                # If it doesn't exist, create the directory
-                os.makedirs(directory_name)
-            plot_name = spectrum_file.replace('spectra', 'pngs').replace('spectra', 'pngs') + f'_mod_{mod_index}.png'
-            plot(plot_name)
+            # Append 1 if chi2 or 0 if cstat
+            if Fit.statMethod == 'chi':
+                data_arr[3].append(1)
+            else:
+                data_arr[3].append(0)
 
             # Try to extract flux uncertainties
             try:
                 nParameters = AllModels(1).nParameters
-                Fit.error(f'maximum 3.5 1.0 1-{nParameters}')
+                Fit.error(f'maximum 4.0 1.0 1-{nParameters}')
                 pars = []
                 for comp in AllModels(1).componentNames:
                     component = getattr(AllModels(1), comp)
                     for par in component.parameterNames:
-                        if par not in skiplist:
+                        if par == 'PhoIndex':
                             parameter = getattr(component, par)
-                            pars.append(parameter.values[0])
-                            if par == 'norm' and comp == 'diskbb':
-                                pass
-                            else:
-                                xrt_dict[mname][par].append(parameter.values[0])
-                                xrt_dict[mname][par + '_neg'].append(abs(parameter.values[0] - parameter.error[0]))
-                                xrt_dict[mname][par + '_pos'].append(abs(parameter.error[1] - parameter.values[0]))
-
-                # Use CFLUX to calculate total flux for two-component models
-                if mname == 'both':
-                    Model('tbabs * cflux * (pegpwrlw + diskbb)')
-                    initial_pars = {
-                        1: f'{pars[0]} -1',
-                        2: Emin, 3: Emax, 4: np.log10(flux_guess * 1e-12),
-                        5: f'{pars[1]} -1', 6: Emin, 7: Emax, 8: f'{pars[2]}',
-                        9: f'{pars[3]} -1', 10: f'{pars[4]} -1'
-                    }
-                    AllModels(1).setPars(initial_pars)
-                    Fit.perform()
-                    nParameters = AllModels(1).nParameters
-                    Fit.error(f'maximum 3.5 1.0 1-{nParameters}')
-                    xrt_dict[mname]['lg10Flux'].append(AllModels(1).cflux.lg10Flux.values[0])
-                    xrt_dict[mname]['lg10Flux_neg'].append(AllModels(1).cflux.lg10Flux.values[0] - AllModels(1).cflux.lg10Flux.error[0])
-                    xrt_dict[mname]['lg10Flux_pos'].append(AllModels(1).cflux.lg10Flux.error[1] - AllModels(1).cflux.lg10Flux.values[0])
+                            data_arr[4].append(parameter.values[0])
+                            data_arr[5].append(abs(parameter.values[0] - parameter.error[0]))
+                            data_arr[6].append(abs(parameter.error[1] - parameter.values[0]))
 
             except ValueError:
                 # Handle fitting failures by appending -1 for all parameters
                 for comp in AllModels(1).componentNames:
                     component = getattr(AllModels(1), comp)
                     for par in component.parameterNames:
-                        if par not in skiplist:
-                            if par == 'norm' and comp == 'diskbb':
-                                pass
-                            else:
-                                xrt_dict[mname][par].append(-1)
-                                xrt_dict[mname][par + '_neg'].append(-1)
-                                xrt_dict[mname][par + '_pos'].append(-1)
+                        if par == 'PhoIndex':
+                            data_arr[4].append(-1)
+                            data_arr[5].append(-1)
+                            data_arr[6].append(-1)
 
-                if mname == 'both':
-                    xrt_dict[mname]['lg10Flux'].append(-1)
-                    xrt_dict[mname]['lg10Flux_neg'].append(-1)
-                    xrt_dict[mname]['lg10Flux_pos'].append(-1)
 
-    # Ensure the results directory exists
-    results_directory = "results"
-    if not os.path.exists(results_directory):
-        os.makedirs(results_directory)
-    
-    # Save the final XRT dictionary to a JSON file
-    with open(f'results/SwiftJ1727_swift-xrt_decay.json', 'w') as j:
-        json.dump(xrt_dict, j, indent=4)
+    # Save data_arr as txt file with a label header specifying the columns
+    np.savetxt('../SWJ1727_Files/gamma_decay.txt', np.array(data_arr).T, header='MJD,chi2,dof,fitstat,gamma,gamma_neg,gamma_pos')
+
 
 if __name__ in "__main__":
     main()

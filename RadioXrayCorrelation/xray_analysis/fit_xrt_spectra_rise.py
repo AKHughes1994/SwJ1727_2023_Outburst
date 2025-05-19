@@ -15,11 +15,11 @@ Features:
 - Generates diagnostic plots for each spectrum.
 
 Inputs:
-- Spectral files located in `../spectra_grade0/`.
+- Spectral files located in `spectra/`.
 
 Outputs:
-- Diagnostic plots saved in `../pngs/`.
-- Results saved in `../results/SwiftJ1727_swift-xrt_rise.json`.
+- Diagnostic plots saved in `pngs/`.
+- Results saved in `results/SwiftJ1727_swift-xrt_rise.json`.
 
 Dependencies:
 - PyXspec (XSPEC Python bindings)
@@ -129,8 +129,8 @@ def main():
     6. Saves the results in a structured JSON file for further analysis.
 
     Outputs:
-    - Diagnostic plots saved in the `../pngs/` directory.
-    - Results saved in `../results/SwiftJ1727_swift-xrt_rise.json`.
+    - Diagnostic plots saved in the `pngs/` directory.
+    - Results saved in `results/SwiftJ1727_swift-xrt_rise.json`.
 
     Dependencies:
     - XSPEC Python bindings (PyXspec)
@@ -158,7 +158,7 @@ def main():
     Xset.parallel.error = 10  # Parallelize error calculations
 
     # Read spectral files (Grade 0 spectra)
-    spectra = glob.glob('../spectra/*final.pi')
+    spectra = glob.glob('spectra/*final.pi')
     obs_isots = []  # Observation times (ISO format)
     bin_counts = []  # Binned counts
     exposure = []

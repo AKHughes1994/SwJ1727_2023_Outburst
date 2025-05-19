@@ -15,13 +15,13 @@ Features:
 
 Inputs:
 - JSON files containing X-ray data for rise and decay phases:
-  - '../results/SwiftJ1727_swift-xrt_rise.json'
-  - '../results/SwiftJ1727_swift-xrt_decay.json'
+  - 'results/SwiftJ1727_swift-xrt_rise.json'
+  - 'results/SwiftJ1727_swift-xrt_decay.json'
 
 Outputs:
 - Text files with processed X-ray data:
-  - '../results/XRT_rise.txt'
-  - '../results/XRT_decay.txt'
+  - '../SwiftJ1727_Files/XRT_rise.txt'
+  - '../SwiftJ1727_Files/XRT_decay.txt'
 
 Output Columns:
 1. Date (MJD): Observation date in Modified Julian Date.

@@ -159,7 +159,7 @@ def fitsio_grppha(opts):
     ebounds = fits.open(opts.rmf)['EBOUNDS']
 
     (quality, grouping, tot_counts) = group_pha(opts, input_fits[1].data, ebounds)
-    if tot_counts < 200: 
+    if tot_counts < 500: # If the total counts are less than 500 then we need to set the minimum counts to 1 (CSTAT FITTING) 
         opts.bin_min_counts = 1
         (quality, grouping, tot_counts) = group_pha(opts, input_fits[1].data, ebounds)
     
