@@ -6,12 +6,27 @@ Hughes et al. 2025: "Comprehensive Radio Monitoring of the Black Hole X-ray Bina
 
 If you make use of this data please cite:
 
-**PLACEHOLDER**
+```
+@ARTICLE{2025arXiv250607798H,
+       author = {{Hughes}, Andrew K. and {Carotenuto}, Francesco and {Russell}, Thomas D. and {Tetarenko}, Alexandra J. and {Miller-Jones}, James C.~A. and {Bahramian}, Arash and {Bright}, Joe S. and {Cowie}, Fraser J. and {Fender}, Rob and {Gurwell}, Mark A. and {Khaulsay}, Jasvinderjit K. and {Kirby}, Anastasia and {Jones}, Serena and {Lescure}, Elodie and {McCollough}, Michael and {Plotkin}, Richard M. and {Rao}, Ramprasad and {Vrtilek}, Saeqa D. and {Williams-Baldwin}, David R.~A. and {Wood}, Callan M. and {Sivakoff}, Gregory R. and {Altamirano}, Diego and {Casella}, Piergiorgio and {Corbel}, Stephane and {DeBoer}, David R. and {Del Santo}, Melania and {Echiburu-Trujillo}, Constanza and {Farah}, Wael and {Gandhi}, Poshak and {Koljonen}, Karri I.~I. and {Maccarone}, Thomas and {Matthews}, James H. and {Markoff}, Sera B. and {Pollak}, Alexander W. and {Russell}, David M. and {Saikia}, Payaswini and {Castro Segura}, Noel and {Shaw}, Aarran W. and {Siemion}, Andrew and {Soria}, Roberto and {Tomsick}, John A. and {van den Eijnden}, Jakob},
+        title = "{Comprehensive Radio Monitoring of the Black Hole X-ray Binary Swift J1727.8$-$1613 during its 2023$-$2024 Outburst}",
+      journal = {arXiv e-prints},
+     keywords = {High Energy Astrophysical Phenomena},
+         year = 2025,
+        month = jun,
+          eid = {arXiv:2506.07798},
+        pages = {arXiv:2506.07798},
+archivePrefix = {arXiv},
+       eprint = {2506.07798},
+ primaryClass = {astro-ph.HE},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025arXiv250607798H},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+```
 
+This is a "living" dataset, so as more data comes in, we will update it, below are the current additions that were not in the paper: 
 
-This is a "living" dataset, so as more data comes in, we will update it, below are the current additions: 
-
-**PLACHOLDER**
+**None**
 
 
 Below is a breakdown of its components:
