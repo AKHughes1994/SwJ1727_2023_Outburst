@@ -63,5 +63,3 @@ Below is a breakdown of its components:
 
 ### Notes
 If you encounter any issues or have questions about the data or analysis scripts, please leave a note or start a discussion in the repository.
-
-This subdirectory is part of the larger analysis described in Hughes et al. (submitted, 2025).
