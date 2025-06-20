@@ -3,7 +3,24 @@
 This subdirectory contains data and scripts related to the analysis of the radio/X-ray correlation for the 2023-2024 outburst of the black hole X-ray binary Swift J1727.8-1613. 
 The methodology and data are associated with the following paper:
 
-TBA
+```
+@ARTICLE{2025arXiv250612387H,
+       author = {{Hughes}, A.~K. and {Carotenuto}, F. and {Russell}, T.~D. and {Tetarenko}, A.~J. and {Miller-Jones}, J.~C.~A. and {Plotkin}, R.~M. and {Bahramian}, A. and {Bright}, J.~S. and {Cowie}, F.~J. and {Crook-Mansour}, J. and {Fender}, R. and {Khaulsay}, J.~K. and {Kirby}, A. and {Jones}, S. and {McCollough}, M. and {Rao}, R. and {Sivakoff}, G.~R. and {Vrtilek}, S.~D. and {Williams-Baldwin}, D.~R.~A. and {Wood}, C.~M. and {Altamirano}, D. and {Casella}, P. and {Castro Segura}, N. and {Corbel}, S. and {Del Santo}, M. and {Echiburu-Trujillo}, C. and {van den Eijnden}, J. and {Gallo}, E. and {Gandhi}, P. and {Koljonen}, K.~I.~I. and {Maccarone}, T. and {Markoff}, S.~B. and {Motta}, S. and {Russell}, D.~M. and {Saikia}, P. and {Shaw}, A.~W. and {Soria}, R. and {Tomsick}, J.~A. and {Yu}, W. and {Zhang}, X.},
+        title = "{The peculiar hard state behaviour of the black hole X-ray binary Swift J1727.8$-$1613}",
+      journal = {arXiv e-prints},
+     keywords = {High Energy Astrophysical Phenomena},
+         year = 2025,
+        month = jun,
+          eid = {arXiv:2506.12387},
+        pages = {arXiv:2506.12387},
+          doi = {10.48550/arXiv.2506.12387},
+archivePrefix = {arXiv},
+       eprint = {2506.12387},
+ primaryClass = {astro-ph.HE},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025arXiv250612387H},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+```
 
 ## Directory Contents
 
