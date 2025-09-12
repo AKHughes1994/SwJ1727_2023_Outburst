@@ -1,12 +1,12 @@
 # Description
 
-This repository contains the analysis I led (as part of a large collaboration) for the 2023-2024 outburst of the black hole X-ray binary Swift J1727.8-1613.
+This repository contains the analysis I led (as part of a large collaboration) for the 2023-2024+ outburst of the black hole X-ray binary Swift J1727.8-1613. Each subdirectory contains the citation for the paper, if the data are used. 
 
 ## Subdirectories:
 
 ### LightCurves
 
-This directory contains data compiled and presented in Hughes et al. (submitted, 2025). The dataset includes over 200 epochs of integrated radio flux densities from seven facilities, with radio frequencies ranging from [details truncated].
+This directory contains data compiled and presented in Hughes et al. 2025a. The dataset includes over 200 epochs of integrated radio flux densities from seven facilities, with radio frequencies ranging from 0.3-300 GHz.
 
 **Main components:**
 
@@ -18,7 +18,7 @@ This directory contains data compiled and presented in Hughes et al. (submitted,
 
 ### RadioXrayCorrelation
 
-This directory contains data and analysis for the radio-X-ray correlation ("LrLx"), as reported in Hughes et al. (submitted, 2025).
+This directory contains data and analysis for the radio-X-ray correlation ("LrLx"), as reported in Hughes et al. 2025b.
 
 **Components:**
 
@@ -31,4 +31,4 @@ This directory contains data and analysis for the radio-X-ray correlation ("LrLx
 2. **X-ray and radio data**: Available in the `SWJ1727_Files` directory.
 3. **Analysis and plotting scripts**: Included in the provided Jupyter notebook(s).
 
-The notebooks are designed to be self-explanatory. However, if anything is unclear, please leave a note or start a discussion. The radio data is derived from the LightCurves directory, with the sole difference being [details truncated].
+The notebooks are designed to be self-explanatory. However, if anything is unclear, please leave a note or start a discussion. The radio data is derived from the LightCurves directory.
