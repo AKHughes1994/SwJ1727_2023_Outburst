@@ -7,19 +7,22 @@ Hughes et al. 2025: "Comprehensive Radio Monitoring of the Black Hole X-ray Bina
 If you make use of this data please cite:
 
 ```
-@ARTICLE{2025arXiv250607798H,
-       author = {{Hughes}, Andrew K. and {Carotenuto}, Francesco and {Russell}, Thomas D. and {Tetarenko}, Alexandra J. and {Miller-Jones}, James C.~A. and {Bahramian}, Arash and {Bright}, Joe S. and {Cowie}, Fraser J. and {Fender}, Rob and {Gurwell}, Mark A. and {Khaulsay}, Jasvinderjit K. and {Kirby}, Anastasia and {Jones}, Serena and {Lescure}, Elodie and {McCollough}, Michael and {Plotkin}, Richard M. and {Rao}, Ramprasad and {Vrtilek}, Saeqa D. and {Williams-Baldwin}, David R.~A. and {Wood}, Callan M. and {Sivakoff}, Gregory R. and {Altamirano}, Diego and {Casella}, Piergiorgio and {Corbel}, Stephane and {DeBoer}, David R. and {Del Santo}, Melania and {Echiburu-Trujillo}, Constanza and {Farah}, Wael and {Gandhi}, Poshak and {Koljonen}, Karri I.~I. and {Maccarone}, Thomas and {Matthews}, James H. and {Markoff}, Sera B. and {Pollak}, Alexander W. and {Russell}, David M. and {Saikia}, Payaswini and {Castro Segura}, Noel and {Shaw}, Aarran W. and {Siemion}, Andrew and {Soria}, Roberto and {Tomsick}, John A. and {van den Eijnden}, Jakob},
-        title = "{Comprehensive Radio Monitoring of the Black Hole X-ray Binary Swift J1727.8$-$1613 during its 2023$-$2024 Outburst}",
-      journal = {arXiv e-prints},
-     keywords = {High Energy Astrophysical Phenomena},
+@ARTICLE{2025ApJ...988..109H,
+       author = {{Hughes}, Andrew K. and {Carotenuto}, Francesco and {Russell}, Thomas D. and {Tetarenko}, Alexandra J. and {Miller-Jones}, James C.~A. and {Bahramian}, Arash and {Bright}, Joe S. and {Cowie}, Fraser J. and {Fender}, Rob and {Gurwell}, Mark A. and {Khaulsay}, Jasvinderjit K. and {Kirby}, Anastasia and {Jones}, Serena and {Lescure}, Elodie and {McCollough}, Michael and {Plotkin}, Richard M. and {Rao}, Ramprasad and {Vrtilek}, Saeqa D. and {Williams-Baldwin}, David R.~A. and {Wood}, Callan M. and {Sivakoff}, Gregory R. and {Altamirano}, Diego and {Casella}, Piergiorgio and {Corbel}, St{\'e}phane and {DeBoer}, David R. and {Del Santo}, Melania and {Echibur{\'u}-Trujillo}, Constanza and {Farah}, Wael and {Gandhi}, Poshak and {Koljonen}, Karri I.~I. and {Maccarone}, Thomas and {Matthews}, James H. and {Markoff}, Sera B. and {Pollak}, Alexander W. and {Russell}, David M. and {Saikia}, Payaswini and {Castro Segura}, Noel and {Shaw}, Aarran W. and {Siemion}, Andrew and {Soria}, Roberto and {Tomsick}, John A. and {van den Eijnden}, Jakob},
+        title = "{Comprehensive Radio Monitoring of the Black Hole X-Ray Binary Swift J1727.8‑1613 during Its 2023{\textendash}2024 Outburst}",
+      journal = {\apj},
+     keywords = {Accretion, Radio continuum emission, Black holes, Relativistic jets, X-ray binary stars, 14, 1340, 162, 1390, 1811, High Energy Astrophysical Phenomena},
          year = 2025,
-        month = jun,
-          eid = {arXiv:2506.07798},
-        pages = {arXiv:2506.07798},
+        month = jul,
+       volume = {988},
+       number = {1},
+          eid = {109},
+        pages = {109},
+          doi = {10.3847/1538-4357/ade2e6},
 archivePrefix = {arXiv},
        eprint = {2506.07798},
  primaryClass = {astro-ph.HE},
-       adsurl = {https://ui.adsabs.harvard.edu/abs/2025arXiv250607798H},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025ApJ...988..109H},
       adsnote = {Provided by the SAO/NASA Astrophysics Data System}
 }
 ```
