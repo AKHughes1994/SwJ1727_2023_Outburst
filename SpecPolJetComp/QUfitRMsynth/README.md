@@ -2,6 +2,8 @@
 
 Broadband QU-fitting and RM synthesis pipeline for the Swift J1727.8-1613 MeerKAT spectropolarimetric dataset.
 
+> **Note on included files:** Only the results for the favoured models are included in `results/`. Given the number of model types fit per epoch and the size of the individual posterior sample `.pkl` files, including everything was not practical — only the JSON summaries and plots for the favoured models are tracked in the repository. Bash scripts are provided to reprocess everything from scratch (`run_all_model.sh`) or just the favoured models (`run_best_models.sh`). If doing so, **run `faraday_synthesis.py` first** — its RM-CLEAN outputs are used to set the Faraday depth prior range for each epoch before fitting.
+
 The data were reduced and polarisation spectra extracted using [polkat](https://github.com/AKHughes1994/polkat), a MeerKAT-specific polarisation calibration and extraction pipeline. The output per-epoch QU text files live in `files/J1727/QU_text/` and are the starting point for everything here.
 
 ---

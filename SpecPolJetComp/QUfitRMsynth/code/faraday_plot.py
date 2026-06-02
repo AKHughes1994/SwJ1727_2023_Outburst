@@ -185,12 +185,18 @@ def plot_data_diagnostic(data: PolarizationData,
         
         ax.set_ylabel('Stokes I (Jy)', fontsize=12)
         ax.legend(loc='best', framealpha=0.9)
+        # Enforce a minimum y-range of ±10% of the median Stokes I so the axis
+        # never zooms in so tightly that systematic bandpass errors (at the 1-2% level) look dramatic.
+        I_mid = np.median(data.I)
+        margin = 0.1 * abs(I_mid)
+        ylo, yhi = ax.get_ylim()
+        ax.set_ylim(min(ylo, I_mid - margin), max(yhi, I_mid + margin))
     else:
-        ax.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)', 
+        ax.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)',
                ha='center', va='center', transform=ax.transAxes,
                fontsize=12, color='gray')
         ax.set_ylabel('Stokes I (Jy)', fontsize=12)
-    
+
     ax.set_xlabel('λ² (m²)', fontsize=12)
     ax.grid(True, alpha=0.3)
     add_ticks_all_sides(ax)
@@ -592,12 +598,18 @@ def plot_fit_results(results: 'FitResults',
         
         ax_I.set_ylabel('Stokes I (Jy)', fontsize=13)
         ax_I.legend(loc='best', framealpha=0.9)
+        # Enforce a minimum y-range of ±10% of the median Stokes I so the axis
+        # never zooms in so tightly that systematic bandpass errors (at the 1-2% level) look dramatic.
+        I_mid = np.median(data.I)
+        margin = 0.1 * abs(I_mid)
+        ylo, yhi = ax_I.get_ylim()
+        ax_I.set_ylim(min(ylo, I_mid - margin), max(yhi, I_mid + margin))
     else:
-        ax_I.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)', 
+        ax_I.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)',
                  ha='center', va='center', transform=ax_I.transAxes,
                  fontsize=12, color='gray')
         ax_I.set_ylabel('Stokes I (Jy)', fontsize=13)
-    
+
     ax_I.set_xlim(lambda_sq_plot_min, lambda_sq_plot_max)
     ax_I.tick_params(axis='both', labelsize=11, labelbottom=False)
     ax_I.grid(True, alpha=0.3)

@@ -159,7 +159,7 @@ _seed_seq = np.random.SeedSequence(MASTER_SEED)
 rng = np.random.default_rng(MASTER_SEED)  # overridden per trial in the fit loop
 
 N_CORES = 15
-N_TRIALS = 10   # Repeat the fit N times with independent posterior draws; 1 = normal single run
+N_TRIALS = 1   # Repeat the fit N times with independent posterior draws; 1 = normal single run
 
 TIE_RM = False
 SKIP_IF_EXISTS = True  # If True, skip fitting and load existing .pkl if it exists
