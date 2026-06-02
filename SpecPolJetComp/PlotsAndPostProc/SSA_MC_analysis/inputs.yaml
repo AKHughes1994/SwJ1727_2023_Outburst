@@ -1,0 +1,167 @@
+# ============================================================
+# Parameter configuration for Monte Carlo run of SSA estimates
+# ============================================================
+#
+# HOW TO USE:
+# - Each parameter name MUST match the function argument exactly
+# - Each parameter defines a probability distribution
+# - Edit values, uncertainties, or distribution types as needed
+#
+# SUPPORTED DISTRIBUTIONS:
+#
+# 1) normal:
+#    required: mean, sigma  (or sigma_frac = sigma / |mean|)
+#    example:
+#      dist: normal
+#      mean: 10.0
+#      sigma: 1.0
+#
+# 2) lognormal:
+#    defined in linear space; internally converted to log-space params
+#    required: mean
+#    optional: sigma OR sigma_frac
+#    example:
+#      dist: lognormal
+#      mean: 100.0
+#      sigma_frac: 0.2
+#
+# 3) uniform:
+#    required: low, high
+#    optional: space ('linear' or 'log')  — log draws uniformly in log10
+#    example:
+#      dist: uniform
+#      low: 1.0
+#      high: 10.0
+#
+# 4) asymm_normal (asymmetric / split normal):
+#    required: mean, sigma_up, sigma_down
+#    example:
+#      dist: asymm_normal
+#      mean: 10.0
+#      sigma_up: 2.0
+#      sigma_down: 1.0
+#
+# 5) beta:
+#    matches scipy.stats.beta(a, b, loc=loc, scale=scale)
+#    support is [loc, loc + scale]; draws are loc + Beta(alpha, beta) * scale
+#    required: alpha, beta  (shape parameters; both must be > 0)
+#    optional: loc, scale   (default: 0, 1)
+#    example:
+#      dist: beta
+#      alpha: 2.0
+#      beta: 5.0
+#      loc: 0.0
+#      scale: 10.0
+#
+# OPTIONAL FIELDS (any distribution):
+#   bounds: [min, max]      — hard clip; use null for one-sided or no limit
+#   strict_positive: true   — replace non-positive draws with a tiny epsilon
+#   sigma_frac: float       — fractional 1-sigma (sigma = |mean| * sigma_frac)
+#
+# ============================================================
+
+
+# ============================================================
+# GLOBALS  —  run-level settings (not sampled)
+# ============================================================
+
+globals:
+  # Directory for diagnostic PDFs.  Leave blank ("") to default to CWD/plots
+  # (created automatically if it does not exist).
+  plots_path: ""
+
+  # Directory for sample .npz files.  Leave blank ("") to default to CWD/samples
+  # (created automatically if it does not exist).
+  samples_path: ""
+
+  # Base filename stem.  The sampled-function name is appended automatically:
+  #   e.g.  mc_out_E_energy_form_posterior.pdf
+  #          mc_out_E_energy_form_params.pdf
+  output_stem: "mc_out"
+
+  # Show interactive plot windows after saving.
+  # Set true for exploratory work; false for headless / batch runs.
+  show_plot: false
+
+  # Padding factor applied to the inferred gamma_min upper limit before it is
+  # used as the high bound for subsequent MC runs.  Values < 1 are pinned to
+  # 1.0 so the bound can never be tightened below the inferred maximum.
+  gamma_min_padding: 1.0
+
+  # Joint sampling mode: draw all input parameters once from a single seed,
+  # run gamma_min refinement, then evaluate E / R / n_e / B on the shared draw.
+  # Produces physically correlated posteriors and a corner plot.
+  # Set false to run each function independently (original behaviour).
+  joint_sampling: true
+  joint_seed: 1995
+
+# ============================================================
+# SAMPLING PARAMETERS
+# ============================================================
+
+flux_dens_peak_mJy:
+  dist: normal
+  mean: 196
+  sigma_frac: 0.03
+  strict_positive: true
+
+nu_obs_Hz:
+  dist: normal
+  mean: 1.3e9
+  sigma_frac: 0.01
+  strict_positive: true
+
+dist_kpc:
+  dist: beta
+  alpha: 4.716958661984867
+  beta: 29.99999997257124
+  loc: 2.411431302803546
+  scale: 23.79047190277904
+
+alpha_thin:
+  dist: uniform
+  high: -0.5
+  low: -1.0
+
+gamma_min:
+  dist: uniform
+  high: 1.0e2
+  low: 3
+  strict_positive: true
+
+gamma_max:
+  dist: uniform
+  space: log
+  high: 1.0e10
+  low: 1.0e3
+  strict_positive: true
+
+bulk_gamma:
+  dist: normal
+  mean: 1.0
+  sigma_frac: 0.0
+  bounds: [1.0, null]
+
+cos_inclination:
+  dist: uniform
+  low: -1
+  high: 1
+
+redshift:
+  dist: normal
+  mean: 0.0
+  sigma: 0.0
+  bounds: [0.0, null]
+
+proton_energy_ratio:
+  dist: normal
+  mean: 0.0
+  sigma: 0.0
+  strict_positive: true
+
+equip_deviation:
+  dist: lognormal
+  space: log
+  mean: 0.0
+  sigma: 0.5
+  strict_positive: true

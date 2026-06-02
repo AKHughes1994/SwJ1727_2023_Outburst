@@ -1,0 +1,78 @@
+# =============================================================================
+# Flagging configuration for faraday_obs_fit.py
+#
+# The [default] block applies to all datasets.
+# Each [[overrides]] block applies when any substring in 'match' is found
+# in the data file stem (data_id). Only the first matching override is used.
+# Any key omitted from an override inherits the default value.
+# =============================================================================
+
+[default]
+sigma_clip_extreme   = 20.0         # flag |value - median| > N * MAD_sigma (all IQUV flux + errors)
+jitter_frac          = 0.0
+sigma_clip_v         = "auto"       # "auto" or a float threshold
+sigma_clip_errors    = 4.0
+sigma_clip_spectrum  = 3.0
+spectrum_clip_sided  = "two"        # "low" | "two"
+spectrum_deg         = 4
+spectrum_stokes      = ["i", "q", "u"]
+freq_ranges          = []
+
+
+# -----------------------------------------------------------------------------
+# Per-dataset overrides
+# 'match' is a list of substrings; the first [[overrides]] block whose match
+# list contains any substring present in data_id is applied.
+# Only keys that differ from [default] need to be listed.
+# -----------------------------------------------------------------------------
+
+[[overrides]]
+match            = ["3C286", "J1733"]
+sigma_clip_errors   = 100.0
+sigma_clip_spectrum = 100.0
+spectrum_clip_sided = "two"
+spectrum_deg        = 4
+sigma_clip_v        = 1000.0
+
+#[[overrides]]
+#match            = ["2402"]
+#sigma_clip_v     = "auto"
+#sigma_clip_errors = 4.0
+#freq_ranges      = []               # No RFI flagging for this epoch
+
+[[overrides]]
+match            = ["0904", "0906","0908"]
+freq_ranges          = ["1.60~1.8"]
+sigma_clip_spectrum = 3.0
+
+[[overrides]]
+match            = ["1014"]
+jitter_frac      = 0.0001
+sigma_clip_v     = 'auto'
+sigma_clip_errors   = 5.0
+sigma_clip_spectrum = 3.0
+spectrum_clip_sided = "two"
+spectrum_deg        = 4
+freq_ranges         = ["0.90~0.95"]
+
+[[overrides]]
+match            = ["1006"]
+jitter_frac      = 0.0
+sigma_clip_v     = 'auto'
+sigma_clip_errors   = 5.0
+sigma_clip_spectrum = 3.0
+spectrum_clip_sided = "two"
+spectrum_deg        = 8
+# freq_ranges         = ["1.6~1.8", "0.90~0.92"]
+
+
+[[overrides]]
+match            = ["4U1630"]
+jitter_frac      = 0.01
+sigma_clip_errors   = 2.0
+sigma_clip_spectrum = 4.0
+spectrum_clip_sided = "two"
+spectrum_deg        = 4
+spectrum_stokes      = ["i", "q", "u"]
+freq_ranges         = ["1.6~1.8"]
+

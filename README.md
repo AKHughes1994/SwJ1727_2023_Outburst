@@ -1,8 +1,10 @@
 # Description
 
-This repository contains the analysis I led (as part of a large collaboration) for the 2023-2024+ outburst of the black hole X-ray binary Swift J1727.8-1613. Each subdirectory contains the citation for the paper, if the data are used. 
+This repository contains the analysis I led (as part of a large collaboration) for the 2023-2024+ outburst of the black hole X-ray binary Swift J1727.8-1613. Each subdirectory contains data and analysis scripts; if the data are used, please cite the comprising papers listed within each subdirectory.
 
 ## Subdirectories:
+
+---
 
 ### LightCurves
 
@@ -32,3 +34,14 @@ This directory contains data and analysis for the radio-X-ray correlation ("LrLx
 3. **Analysis and plotting scripts**: Included in the provided Jupyter notebook(s).
 
 The notebooks are designed to be self-explanatory. However, if anything is unclear, please leave a note or start a discussion. The radio data is derived from the LightCurves directory.
+
+---
+
+### SpecPolJetComp
+
+This directory contains data and analysis for the time-domain radio spectropolarimetry of Swift J1727.8-1613, as reported in Hughes et al. 2026a. The dataset is used to identify evolving plasma conditions in the jet through time-resolved measurements of the radio spectrum and linear polarization properties.
+
+**Main components:**
+
+1. **QUfitRMsynth**: Scripts and data for QU-fitting and RM synthesis analysis of the polarized radio emission.
+2. **PlotsAndPostProc**: Post-processing scripts and plotting routines for generating the figures presented in the paper.
