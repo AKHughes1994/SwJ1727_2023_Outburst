@@ -6,6 +6,7 @@ Fits models in Cartesian (a, b) parameterization and provides preliminary
 parameter extraction using dynesty's built-in statistical functions.
 """
 
+import sys
 import numpy as np
 import pickle
 import copy
@@ -20,6 +21,7 @@ from multiprocessing import Pool
 from faraday_utils import (ThinComponent, ThinPowerLawComponent, ThickComponent,
                            CompositeModel, C_LIGHT)
 from faraday_data import PolarizationData, validate_data
+from faraday_processing import convert_ref_samples_to_intrinsic
 
 import dynesty
 from dynesty import utils as dyfunc
@@ -996,6 +998,43 @@ def _build_peaked_angle_ppf(k, peak_angle=0.0, n_grid=100_000):
                     fill_value=(theta[0], theta[-1]))
 
 
+def _find_phi_center_source(param_info_free: List[Dict], param_info_full: List[Dict],
+                            comp_idx: int, phi_param_name: str,
+                            tie_phi_rm: bool, comp_type: str) -> Tuple[Optional[str], float]:
+    """
+    Locate where a component's Faraday-depth-center parameter (phi_rm or
+    phi_peak) will get its value from — used to shift a peaked psi_0 prior
+    from the lambda^2_ref sampling frame into the intrinsic (lambda^2=0)
+    frame at sample time (psi_0_intrinsic peak = configured peak + phi_center
+    * lambda_sq_ref; see PriorTransform.__call__).
+
+    Returns:
+        ('free', free_idx)  — value comes from params_free[free_idx] at call time
+        ('fixed', value)    — value is fixed at this constant
+        (None, 0.0)         — not found (peaked prior configured without a
+                              matching phi_rm/phi_peak; shift falls back to 0)
+    """
+    target_name = 'tied_phi_rm' if (tie_phi_rm and comp_type in
+                                     ('ThinComponent', 'ThinPowerLawComponent')) else None
+
+    if target_name is not None:
+        for j, info in enumerate(param_info_free):
+            if info['name'] == target_name:
+                return ('free', j)
+        for info in param_info_full:
+            if info['name'] == target_name and info['is_fixed']:
+                return ('fixed', info['fixed_value'])
+        return (None, 0.0)
+
+    for j, info in enumerate(param_info_free):
+        if info['component_idx'] == comp_idx and info['param_name'] == phi_param_name:
+            return ('free', j)
+    for info in param_info_full:
+        if info['component_idx'] == comp_idx and info['param_name'] == phi_param_name and info['is_fixed']:
+            return ('fixed', info['fixed_value'])
+    return (None, 0.0)
+
+
 class PriorTransform:
     """
     Transform unit cube to physical parameters.
@@ -1005,17 +1044,24 @@ class PriorTransform:
     Picklable for multiprocessing.
     """
     
-    def __init__(self, model: CompositeModel, priors: Dict, 
-                 enforce_ordering: bool = True, tie_phi_rm: bool = False):
+    def __init__(self, model: CompositeModel, priors: Dict,
+                 enforce_ordering: bool = True, tie_phi_rm: bool = False,
+                 lambda_sq_ref: Optional[float] = None):
         """
         Initialize prior transform.
-        
+
         Args:
             model: CompositeModel structure
             priors: Prior dictionary (may include fixed parameters)
             enforce_ordering: If True, enforce component ordering
             tie_phi_rm: If True, tie phi_rm across all thin/power-law components
+            lambda_sq_ref: If set, peaked psi_0 priors are shifted by
+                          phi_center * lambda_sq_ref (phi_center = that
+                          component's phi_rm/phi_peak, sampled the same call)
+                          so the configured peak describes the intrinsic
+                          (lambda^2=0) angle rather than the lambda^2_ref one.
         """
+        self.lambda_sq_ref = lambda_sq_ref
         # Build full parameter info
         self.param_info_full = _build_param_info(model, priors, tie_phi_rm=tie_phi_rm)
         
@@ -1041,7 +1087,14 @@ class PriorTransform:
                 if abs(psi_0_max - psi_0_min) >= 0.9 * np.pi:
                     self.periodic.append(i)
 
+        # _psi_ppf: base PPF built at peak_angle=0 — the configured peaked_angle_deg
+        # AND the phi_center*lambda_sq_ref correction are both applied as a cheap
+        # additive shift at sample time (the peaked density has the shift-equivariant
+        # form f(theta - peak_angle), so shifting the peak == shifting the ppf output).
+        # This avoids rebuilding the (expensive, 100k-point) numerical ppf per sample.
         self._psi_ppf = {}
+        self._psi_peak_static = {}   # free-index of 'b' -> configured static peak, radians
+        self._psi_peak_source = {}   # free-index of 'b' -> ('free', idx) | ('fixed', value) | (None, 0.0)
         for i, info in enumerate(self.param_info_free):
             if info.get('is_polar_conversion', False) and info['param_name'] == 'b':
                 polar_spec = info['prior_spec']
@@ -1050,7 +1103,16 @@ class PriorTransform:
                 if angle_prior == 'peaked':
                     peaked_k     = polar_spec.get('peaked_k', PSI_0_PEAKED_K)
                     peaked_angle = np.deg2rad(polar_spec.get('peaked_angle_deg', 0.0))
-                    self._psi_ppf[i] = _build_peaked_angle_ppf(peaked_k, peak_angle=peaked_angle)
+                    self._psi_ppf[i] = _build_peaked_angle_ppf(peaked_k, peak_angle=0.0)
+                    self._psi_peak_static[i] = peaked_angle
+
+                    comp_idx = info['component_idx']
+                    comp_type = info['component_type']
+                    phi_param_name = 'phi_peak' if comp_type == 'ThickComponent' else 'phi_rm'
+                    self._psi_peak_source[i] = _find_phi_center_source(
+                        self.param_info_free, self.param_info_full,
+                        comp_idx, phi_param_name, tie_phi_rm, comp_type
+                    )
 
         self.enforce_ordering = enforce_ordering
         self.model = model
@@ -1151,6 +1213,16 @@ class PriorTransform:
                     params_free[idx] = ordered_values[i]
                     transformed[idx] = True
         
+        # STEP 0-pre: Pre-transform any phi_rm/phi_peak/tied_phi_rm needed to shift
+        # a peaked psi_0 prior into the intrinsic frame (see _psi_peak_source in
+        # __init__). Must run before STEP 0 below computes psi_0. No-op for
+        # parameters already set by STEP -1 (ordering) above.
+        for source_kind, source_ref in self._psi_peak_source.values():
+            if source_kind == 'free' and not transformed[source_ref]:
+                pre_info = self.param_info_free[source_ref]
+                params_free[source_ref] = _transform_parameter(u[source_ref], pre_info['prior_spec'])
+                transformed[source_ref] = True
+
         # STEP 0: Handle polar_conversion pairs (a, b)
         # Must process these together before other transformations
         i = 0
@@ -1200,7 +1272,19 @@ class PriorTransform:
                 if abs(psi_0_max - psi_0_min) >= 0.9 * np.pi:
                     angle_prior = psi_0_bounds[2] if len(psi_0_bounds) == 3 else 'uniform'
                     if angle_prior == 'peaked' and (i + 1) in self._psi_ppf:
-                        psi_0 = float(self._psi_ppf[i + 1](u[i + 1]))
+                        base_psi = float(self._psi_ppf[i + 1](u[i + 1]))
+                        shift = self._psi_peak_static[i + 1]
+                        if self.lambda_sq_ref is not None:
+                            source_kind, source_ref = self._psi_peak_source[i + 1]
+                            if source_kind == 'free':
+                                phi_center = params_free[source_ref]
+                            elif source_kind == 'fixed':
+                                phi_center = source_ref
+                            else:
+                                phi_center = 0.0
+                            shift += phi_center * self.lambda_sq_ref
+                        # psi_0 is pi-periodic; wrap into [-pi/2, pi/2)
+                        psi_0 = ((base_psi + shift + np.pi / 2) % np.pi) - np.pi / 2
                     else:
                         psi_0 = np.pi * (u[i + 1] - 0.5)
                 else:
@@ -1298,26 +1382,29 @@ class PriorTransform:
         return params_free
 
 
-def create_prior_transform(model: CompositeModel, 
+def create_prior_transform(model: CompositeModel,
                           priors: Dict,
                           enforce_ordering: bool = True,
-                          tie_phi_rm: bool = False):
+                          tie_phi_rm: bool = False,
+                          lambda_sq_ref: Optional[float] = None):
     """
     Create prior transform function for dynesty.
-    
+
     Transforms from unit cube [0,1]^N to physical parameters,
     with optional ordering constraints and RM tying.
-    
+
     Args:
         model: CompositeModel structure
         priors: Prior dictionary
         enforce_ordering: If True, enforce component ordering
         tie_phi_rm: If True, tie phi_rm across all thin/power-law components
-        
+        lambda_sq_ref: Reference wavelength squared for peaked psi_0 priors
+                      (see PriorTransform.__init__)
+
     Returns:
         PriorTransform callable (picklable for multiprocessing)
     """
-    return PriorTransform(model, priors, enforce_ordering, tie_phi_rm)
+    return PriorTransform(model, priors, enforce_ordering, tie_phi_rm, lambda_sq_ref)
 
 
 # =============================================================================
@@ -1393,7 +1480,8 @@ class FitSetup:
         
         # Create prior transform first (needed to build param_names)
         self.prior_transform = create_prior_transform(
-            model, self.priors, enforce_ordering=enforce_ordering, tie_phi_rm=tie_phi_rm
+            model, self.priors, enforce_ordering=enforce_ordering, tie_phi_rm=tie_phi_rm,
+            lambda_sq_ref=self.lambda_sq_ref
         )
         
         self.param_names = [p['name'] for p in self.prior_transform.param_info_full]
@@ -1470,6 +1558,16 @@ class FitSetup:
         reduces to a pure phase for power-law components. Falls back to the
         variance-weighted mean of the data otherwise.
         """
+        if self.lambda_sq_ref == 0.0 and any(isinstance(c, ThinPowerLawComponent) for c in self.model.components):
+            sys.exit(
+                "FitSetup: lambda_sq_ref=0.0 is invalid for models with a ThinPowerLawComponent — "
+                "it would set that component's lambda_sq_0=0.0, making "
+                "spectral_factor = (lambda_sq/lambda_sq_0)**(-beta/2) singular at every data "
+                "point, not just at the reference wavelength. Use lambda_sq_ref=None "
+                "(lambda_sq_0 then defaults to 0.05 m²) or an explicit non-zero reference "
+                "wavelength instead."
+            )
+
         if self.lambda_sq_ref is not None:
             lambda_sq_0 = self.lambda_sq_ref
         else:
@@ -2388,6 +2486,11 @@ class FaradayFitter:
 
         Can be called multiple times after continuing sampling with add_batch().
         """
+        # self.samples is re-fetched from the sampler each call (grows after
+        # add_batch()), so drop any cached intrinsic-frame conversion from a
+        # previous call.
+        self._intrinsic_samples_cache = None
+
         print("Computing parameter summaries...")
         t_start = time.time()
         self.param_summary = self._compute_param_summary()
@@ -2506,30 +2609,56 @@ class FaradayFitter:
         self.samples_derived = np.column_stack(processed_samples_list)
         self.param_names_derived = processed_names_list
     
+    def _get_intrinsic_samples(self) -> np.ndarray:
+        """
+        Return posterior samples with (a, b) columns in the intrinsic
+        (lambda^2=0) frame.
+
+        When sampling used a reference-band parameterisation (setup.lambda_sq_ref
+        is not None), the raw self.samples (a, b) are the complex polarization
+        coefficients at lambda^2_ref, not at lambda^2=0 — the same conversion
+        process_posterior_modes() applies before computing modes/HDI. Cached so
+        repeated calls (param summary + derived parameters) don't redo the
+        per-sample, per-component conversion.
+        """
+        if getattr(self, '_intrinsic_samples_cache', None) is not None:
+            return self._intrinsic_samples_cache
+
+        lambda_sq_ref = getattr(self.setup, 'lambda_sq_ref', None)
+        if lambda_sq_ref is None:
+            self._intrinsic_samples_cache = self.samples
+        else:
+            self._intrinsic_samples_cache = convert_ref_samples_to_intrinsic(
+                self.samples, self.setup.param_names, self.setup.model, lambda_sq_ref
+            )
+        return self._intrinsic_samples_cache
+
     def _add_derived_parameters(self):
         """
         Compute and add derived parameters (p0, psi_0) to param_summary.
-        
+
         For each (a, b) pair in sampled parameters, computes:
         - p0 = sqrt(a^2 + b^2) - fractional polarization amplitude
         - psi_0 = 0.5 * arctan2(b, a) - polarization angle in degrees
-        
-        Adds them to param_summary with full statistics.
+
+        Adds them to param_summary with full statistics. Uses the intrinsic
+        (lambda^2=0) frame — see _get_intrinsic_samples().
         """
         param_names = self.setup.param_names
-        
+        intrinsic_samples = self._get_intrinsic_samples()
+
         for i, name in enumerate(param_names):
             if name.endswith('_a'):
                 comp_name = name[:-2]
                 b_name = comp_name + '_b'
-                
+
                 if b_name in param_names:
                     a_idx = i
                     b_idx = param_names.index(b_name)
-                    
+
                     # Extract samples
-                    a_samples = self.samples[:, a_idx]
-                    b_samples = self.samples[:, b_idx]
+                    a_samples = intrinsic_samples[:, a_idx]
+                    b_samples = intrinsic_samples[:, b_idx]
                     
                     # Compute p0 = sqrt(a^2 + b^2)
                     p0_samples = np.sqrt(a_samples**2 + b_samples**2)
@@ -2546,17 +2675,20 @@ class FaradayFitter:
     def _compute_param_summary(self) -> Dict:
         """
         Compute parameter statistics using dynesty's built-in functions.
-        
-        Returns Cartesian parameters only with:
+
+        Returns Cartesian parameters (in the intrinsic, lambda^2=0 frame — see
+        _get_intrinsic_samples()) with:
         - Mean and covariance from dyfunc.mean_and_cov() (full array)
         - Median, 68% CI, and 99% range from dyfunc.quantile() (per parameter)
-        
+
         Returns:
             Dictionary with parameter names as keys and summary dicts as values
         """
+        intrinsic_samples = self._get_intrinsic_samples()
+
         # Filter samples
-        good_mask = np.all(np.isfinite(self.samples), axis=1) & np.isfinite(self.weights) & (self.weights > 0)
-        samples_clean = self.samples[good_mask]
+        good_mask = np.all(np.isfinite(intrinsic_samples), axis=1) & np.isfinite(self.weights) & (self.weights > 0)
+        samples_clean = intrinsic_samples[good_mask]
         weights_clean = self.weights[good_mask]
         
         # Compute mean and covariance for all parameters at once
