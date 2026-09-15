@@ -830,6 +830,9 @@ def flag_channels(data_dict: Dict, config: 'FlaggingConfig') -> Dict:
         iterations_used = 0
         final_fits = {}  # Store final polynomial fits for plotting (regular stokes only)
         total_flags_this_step = 0
+        per_stokes_flags = {s: 0 for s in regular_stokes}
+        if do_qu_clip:
+            per_stokes_flags['QU'] = 0
 
         for iteration in range(int(getattr(config, 'max_iter', 0))):
             iterations_used = iteration + 1
@@ -890,11 +893,13 @@ def flag_channels(data_dict: Dict, config: 'FlaggingConfig') -> Dict:
                 if newly_flagged.any():
                     mask[newly_flagged] = True
                     newly_flagged_this_iter = True
+                    per_stokes_flags[stokes] += int(newly_flagged.sum())
 
             # --- QU: polynomial baseline clipping on linear polarization amplitude P ---
             # Fits a polynomial to P = sqrt(Q²+U²) rather than Q and U individually,
             # which is more robust when high-RM wrapping makes per-parameter fitting unreliable.
-            # The fit is not stored in final_fits (no QU panel in the diagnostic plot).
+            # Stored in final_fits['QU'] so the diagnostic plot can overlay P and its
+            # fit (translucently) on both the Q and U panels.
             if do_qu_clip and all(k in data_dict for k in ('Q', 'U', 'dQ', 'dU')):
                 Q_arr = np.asarray(data_dict['Q'], dtype=float)
                 U_arr = np.asarray(data_dict['U'], dtype=float)
@@ -920,6 +925,12 @@ def flag_channels(data_dict: Dict, config: 'FlaggingConfig') -> Dict:
                         coef = None
 
                     if coef is not None:
+                        final_fits['QU'] = {
+                            'coef': coef,
+                            'freq_mean': freq_mean_qu,
+                            'freq_std': freq_std_qu
+                        }
+
                         freq_norm_all = (freq_hz - freq_mean_qu) / freq_std_qu
                         P_hat = np.polyval(coef, freq_norm_all)
 
@@ -946,6 +957,7 @@ def flag_channels(data_dict: Dict, config: 'FlaggingConfig') -> Dict:
                         if newly_flagged.any():
                             mask[newly_flagged] = True
                             newly_flagged_this_iter = True
+                            per_stokes_flags['QU'] += int(newly_flagged.sum())
 
             # Stop if no new flags in this iteration
             if not newly_flagged_this_iter:
@@ -963,12 +975,15 @@ def flag_channels(data_dict: Dict, config: 'FlaggingConfig') -> Dict:
                 'jitter': spectrum_jitter,
                 'sided': spectrum_clip_sided,
                 'iterations': iterations_used,
+                'per_stokes': dict(per_stokes_flags),  # Channels flagged, attributed to the stokes param that triggered it
                 'fit': final_fits  # Polynomial fits for regular stokes only (no QU panel)
             }
             if config.verbose:
                 whiten_str = 'whitened' if whiten else 'absolute'
                 print(f"  - Spectral baseline clipping on {stokes_str} (threshold: {float(sigma_clip_spectrum):.1f}σ, "
                       f"residuals: {whiten_str}, deg: {spectrum_deg}, sided: {spectrum_clip_sided}, {iterations_used} iter): {flags_total} channels")
+                for s, c in per_stokes_flags.items():
+                    print(f"      · {s}: {c} channels")
         else:
             if config.verbose:
                 print(f"  - Spectral baseline clipping: 0 channels")

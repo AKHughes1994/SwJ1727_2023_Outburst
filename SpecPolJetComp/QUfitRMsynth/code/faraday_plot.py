@@ -15,7 +15,7 @@ from matplotlib.ticker import AutoMinorLocator
 from matplotlib.patches import Polygon
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Union
 import corner
 from dynesty import utils as dyfunc
 from faraday_data import PolarizationData, IFitter
@@ -185,18 +185,12 @@ def plot_data_diagnostic(data: PolarizationData,
         
         ax.set_ylabel('Stokes I (Jy)', fontsize=12)
         ax.legend(loc='best', framealpha=0.9)
-        # Enforce a minimum y-range of ±10% of the median Stokes I so the axis
-        # never zooms in so tightly that systematic bandpass errors (at the 1-2% level) look dramatic.
-        I_mid = np.median(data.I)
-        margin = 0.1 * abs(I_mid)
-        ylo, yhi = ax.get_ylim()
-        ax.set_ylim(min(ylo, I_mid - margin), max(yhi, I_mid + margin))
     else:
-        ax.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)',
+        ax.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)', 
                ha='center', va='center', transform=ax.transAxes,
                fontsize=12, color='gray')
         ax.set_ylabel('Stokes I (Jy)', fontsize=12)
-
+    
     ax.set_xlabel('λ² (m²)', fontsize=12)
     ax.grid(True, alpha=0.3)
     add_ticks_all_sides(ax)
@@ -399,11 +393,13 @@ def plot_fit_results(results: 'FitResults',
                     n_mc_samples: int = 100,
                     n_posterior_samples: int = 100,
                     padding: float = 1.25,
-                    phi_range: Optional[float] = None,
+                    phi_range: Optional[Union[float, Tuple[float, float]]] = None,
                     n_phi: int = 2048,
                     weight_type: str = 'variance',
                     model_method: str = 'representative',
-                    plot_fdf_posterior_samples: bool = False) -> plt.Figure:
+                    plot_fdf_posterior_samples: bool = False,
+                    clean_fdf: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+                    clean_components: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> plt.Figure:
     """
     Create diagnostic plot for fit results.
     
@@ -435,14 +431,26 @@ def plot_fit_results(results: 'FitResults',
         n_posterior_samples: Number of posterior realizations to show (0 to disable)
         padding: λ² range multiplier for model evaluation and plotting (default=1.0)
                  Values > 1.0 extend range beyond data for debugging.
-        phi_range: Faraday depth range (±phi_range) for FDF panel. If None, 
-                   auto-computed from RMTF FWHM and fitted RM values.
+        phi_range: Faraday depth range for FDF panel. Either a scalar for a
+                   symmetric window (±phi_range) or a (phi_min, phi_max) tuple
+                   for an asymmetric window. If None, auto-computed
+                   (symmetric) from RMTF FWHM and fitted RM values.
         n_phi: Number of points in Faraday depth grid for FDF panel
         weight_type: Weighting for RM synthesis ('variance' or 'uniform')
         model_method: Method for FDF model parameters ('representative', 'median',
                      'mean', 'map', 'mode')
         plot_fdf_posterior_samples: If True, plot posterior samples on FDF panel
-        
+        clean_fdf: Optional (phi, amplitude) from an RMSynthesis CLEAN FDF
+                  spectrum. If provided, overlaid on the bottom FDF panel on
+                  its own linear-scale twin axis (unnormalised — units aren't
+                  matched to the model's fractional amplitude — purely a
+                  qualitative shape/position comparison; that axis's ticks
+                  and label are hidden).
+        clean_components: Optional (phi, amplitude) from an RMSynthesis CLEAN
+                  components (FDFmodel) file. If provided, overlaid in red as
+                  a centre-aligned step function on the same twin axis as
+                  clean_fdf.
+
     Returns:
         Figure object
     """
@@ -598,18 +606,12 @@ def plot_fit_results(results: 'FitResults',
         
         ax_I.set_ylabel('Stokes I (Jy)', fontsize=13)
         ax_I.legend(loc='best', framealpha=0.9)
-        # Enforce a minimum y-range of ±10% of the median Stokes I so the axis
-        # never zooms in so tightly that systematic bandpass errors (at the 1-2% level) look dramatic.
-        I_mid = np.median(data.I)
-        margin = 0.1 * abs(I_mid)
-        ylo, yhi = ax_I.get_ylim()
-        ax_I.set_ylim(min(ylo, I_mid - margin), max(yhi, I_mid + margin))
     else:
-        ax_I.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)',
+        ax_I.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)', 
                  ha='center', va='center', transform=ax_I.transAxes,
                  fontsize=12, color='gray')
         ax_I.set_ylabel('Stokes I (Jy)', fontsize=13)
-
+    
     ax_I.set_xlim(lambda_sq_plot_min, lambda_sq_plot_max)
     ax_I.tick_params(axis='both', labelsize=11, labelbottom=False)
     ax_I.grid(True, alpha=0.3)
@@ -876,10 +878,18 @@ def plot_fit_results(results: 'FitResults',
             phi_range_comps = 0.0
         
         phi_range = max(5.0 * fwhm, phi_range_comps, 100.0)
-    
+
+    # phi_range may be a scalar (symmetric ±phi_range) or a (phi_min, phi_max)
+    # tuple for an asymmetric window.
+    if isinstance(phi_range, (tuple, list)):
+        phi_min_disp, phi_max_disp = float(phi_range[0]), float(phi_range[1])
+    else:
+        phi_min_disp, phi_max_disp = -float(phi_range), float(phi_range)
+
     # Faraday depth grids (wide for computation, central for display)
-    phi_grid = np.linspace(-phi_range, phi_range, n_phi)
-    phi_grid_wide = np.linspace(-5*phi_range, 5*phi_range, 5*n_phi)
+    phi_grid = np.linspace(phi_min_disp, phi_max_disp, n_phi)
+    display_width = phi_max_disp - phi_min_disp
+    phi_grid_wide = np.linspace(phi_min_disp - 2*display_width, phi_max_disp + 2*display_width, 5*n_phi)
     n_start = 2*n_phi
     n_end = 3*n_phi
     
@@ -916,6 +926,7 @@ def plot_fit_results(results: 'FitResults',
     
     ax_fdf.axhline(0, color='gray', linestyle=':', linewidth=0.5)
     ax_fdf.axvline(0, color='gray', linestyle=':', linewidth=0.5)
+    ax_fdf.set_xlim(phi_min_disp, phi_max_disp)  # axvline(0) above must not stretch the range to include 0
     ax_fdf.set_yscale('log')
     comp_fdfs = [comp.compute_fdf(phi_grid) for comp in fdf_model.components]
     max_fdf_amp = max(np.max(np.abs(f)) for f in comp_fdfs) if comp_fdfs else 0.0
@@ -937,7 +948,31 @@ def plot_fit_results(results: 'FitResults',
     ax_fdf.legend(handles=legend_handles, loc='best', framealpha=0.9, fontsize=13)
     ax_fdf.grid(True, alpha=0.3, which='both')
     add_ticks_all_sides(ax_fdf)
-    
+
+    # CLEAN FDF spectrum + CLEAN components overlay (RMSynthesis) — unnormalised,
+    # own linear-scale twin axis purely for a qualitative shape/position
+    # comparison against the model above; no ticks/label/legend entry.
+    if clean_fdf is not None or clean_components is not None:
+        ax_fdf_clean = ax_fdf.twinx()
+
+        if clean_fdf is not None:
+            clean_phi, clean_amp = clean_fdf
+            clean_mask = (clean_phi >= phi_min_disp) & (clean_phi <= phi_max_disp)
+            ax_fdf_clean.plot(clean_phi[clean_mask], clean_amp[clean_mask], '-',
+                              color='grey', linewidth=1.0, zorder=20)
+
+        if clean_components is not None:
+            cc_phi, cc_amp = clean_components
+            cc_mask = (cc_phi >= phi_min_disp) & (cc_phi <= phi_max_disp)
+            ax_fdf_clean.step(cc_phi[cc_mask], cc_amp[cc_mask], where='mid',
+                              color='red', alpha=0.5, linewidth=1.4, zorder=21)
+
+        ax_fdf_clean.set_yticks([])
+        ax_fdf_clean.set_ylabel('')
+        # Keep the QU-fit model (ax_fdf, drawn above) in front of this overlay.
+        ax_fdf.set_zorder(ax_fdf_clean.get_zorder() + 1)
+        ax_fdf.patch.set_visible(False)
+
     # ========================================================================
     # Overall formatting
     # ========================================================================
@@ -1317,7 +1352,7 @@ def plot_corner(samples: np.ndarray,
         'bins': 50,
         'hist_kwargs': {'alpha': 0.8, 'color': 'steelblue'},
         'color': 'steelblue',
-        'plot_datapoints': True,
+        'plot_datapoints': False,
         'data_kwargs': {'alpha': 0.1},
         'plot_density': True,
         'contour_kwargs': {'colors': 'darkblue', 'linewidths': 1.2},
@@ -1687,7 +1722,7 @@ def plot_convergence(results: 'FitResults',
 
 
 def plot_fdf_diagnostic(results: 'FitResults',
-                       phi_range: Optional[float] = None,
+                       phi_range: Optional[Union[float, Tuple[float, float]]] = None,
                        n_phi: int = 2048,
                        weight_type: str = 'variance',
                        model_method: str = 'representative',
@@ -1709,7 +1744,9 @@ def plot_fdf_diagnostic(results: 'FitResults',
     
     Args:
         results: FitResults object from fitting
-        phi_range: Range in Faraday depth (±phi_range). If None, auto-computed as
+        phi_range: Range in Faraday depth. Either a scalar for a symmetric
+                   window (±phi_range) or a (phi_min, phi_max) tuple for an
+                   asymmetric window. If None, auto-computed (symmetric) as
                    max(10×FWHM, max_RM+2×FWHM) to cover full parameter space
         n_phi: Number of points in Faraday depth grid
         weight_type: Weighting for RM synthesis ('variance' or 'uniform')
@@ -1775,19 +1812,38 @@ def plot_fdf_diagnostic(results: 'FitResults',
         
         phi_range = max(phi_range_fwhm, phi_range_comps, 100.0)
         print(f"   Auto-computed phi_range = {phi_range:.1f} rad/m² (FWHM = {fwhm:.1f})")
-    
+
+    # phi_range may be a scalar (symmetric ±phi_range) or a (phi_min, phi_max)
+    # tuple for an asymmetric window.
+    if isinstance(phi_range, (tuple, list)):
+        phi_min_disp, phi_max_disp = float(phi_range[0]), float(phi_range[1])
+    else:
+        phi_min_disp, phi_max_disp = -float(phi_range), float(phi_range)
+
     # Create Faraday depth grid for display
-    phi_grid = np.linspace(-phi_range, phi_range, n_phi)
-    
-    # Use broader grid for computation to avoid edge effects
-    # Compute on 5x wider range, then extract central region
-    phi_grid_wide = np.linspace(-5*phi_range, 5*phi_range, 5*n_phi)
-    
-    # Compute RMTF on wide grid
-    rmtf_wide, rmtf_props = compute_rmtf(lambda_sq, phi_grid_wide, 
+    phi_grid = np.linspace(phi_min_disp, phi_max_disp, n_phi)
+
+    # Use broader grid for computation to avoid edge effects: pad each side by
+    # 2x the display width (same 5x-total-width ratio as the symmetric case),
+    # then extract the central region.
+    display_width = phi_max_disp - phi_min_disp
+    phi_grid_wide = np.linspace(phi_min_disp - 2*display_width, phi_max_disp + 2*display_width, 5*n_phi)
+
+    # RMTF always peaks at phi=0 by construction, so for an off-center display
+    # window (phi_min_disp/phi_max_disp not straddling 0) evaluate it on its
+    # own zero-centered grid of the same width, then shift it to the middle
+    # of the display window when plotting — shows its shape (FWHM, sidelobes)
+    # for context without implying it was evaluated at those phi values.
+    phi_center = (phi_min_disp + phi_max_disp) / 2
+    rmtf_half_width = display_width / 2
+    phi_grid_rmtf = np.linspace(-rmtf_half_width, rmtf_half_width, n_phi) + phi_center
+    phi_grid_wide_rmtf = np.linspace(-rmtf_half_width - 2*display_width, rmtf_half_width + 2*display_width, 5*n_phi)
+
+    # Compute RMTF on its own (zero-centered) wide grid
+    rmtf_wide, rmtf_props = compute_rmtf(lambda_sq, phi_grid_wide_rmtf,
                                          weight_type=weight_type,
                                          Q_err=data.Q_err, U_err=data.U_err)
-    
+
     # Compute intrinsic model FDF on WIDE grid (infinite bandwidth limit)
     model_fdf_wide = best_model.compute_fdf(phi_grid_wide)
     
@@ -1808,18 +1864,22 @@ def plot_fdf_diagnostic(results: 'FitResults',
     # Top panel: RMTF
     # ========================================================================
     ax = axes[0]
-    
-    # Actual RMTF
-    ax.plot(phi_grid, np.abs(rmtf), 'k-', linewidth=2, label='|R(φ)| Actual')
-    ax.plot(phi_grid, np.real(rmtf), 'b--', linewidth=1.5, label='Re[R(φ)]', alpha=0.7)
-    ax.plot(phi_grid, np.imag(rmtf), 'r--', linewidth=1.5, label='Im[R(φ)]', alpha=0.7)
-    
+
+    # Actual RMTF (plotted on its recentred grid — see phi_grid_rmtf above)
+    ax.plot(phi_grid_rmtf, np.abs(rmtf), 'k-', linewidth=2, label='|R(φ)| Actual')
+    ax.plot(phi_grid_rmtf, np.real(rmtf), 'b--', linewidth=1.5, label='Re[R(φ)]', alpha=0.7)
+    ax.plot(phi_grid_rmtf, np.imag(rmtf), 'r--', linewidth=1.5, label='Im[R(φ)]', alpha=0.7)
+
     ax.axhline(0, color='gray', linestyle='--', linewidth=1.0)
-    ax.axvline(0, color='gray', linestyle=':', linewidth=0.5)
-    
+    ax.axvline(phi_center, color='gray', linestyle=':', linewidth=0.5)
+    ax.set_xlim(phi_min_disp, phi_max_disp)
+
     # FWHM annotation removed per user request
-    
-    ax.set_ylabel('RMTF', fontsize=12)
+
+    if phi_center != 0:
+        ax.set_ylabel(f'RMTF (recentred, offset {phi_center:+.0f})', fontsize=12)
+    else:
+        ax.set_ylabel('RMTF', fontsize=12)
     ax.tick_params(axis='both', labelsize=12, labelbottom=False)
     ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
     ax.grid(True, alpha=0.3)
@@ -1854,7 +1914,8 @@ def plot_fdf_diagnostic(results: 'FitResults',
     
     ax.axhline(0, color='gray', linestyle=':', linewidth=0.5)
     ax.axvline(0, color='gray', linestyle=':', linewidth=0.5)
-    
+    ax.set_xlim(phi_min_disp, phi_max_disp)  # axvline(0) above must not stretch the range to include 0
+
     ax.set_ylabel('|F(φ)| (fractional)', fontsize=12)
     ax.tick_params(axis='both', labelsize=12, labelbottom=False)
     ax.legend(loc='best', framealpha=0.9, fontsize=9)
@@ -2026,7 +2087,16 @@ def plot_flagging_diagnostic(raw_data: Dict,
     
     # Color scheme
     colors = {'I': 'black', 'Q': 'blue', 'U': 'red', 'V': 'green'}
-    
+
+    # Linear polarization amplitude P = sqrt(Q²+U²), overlaid translucently on
+    # both the Q and U panels (and its spectral-baseline fit, if 'QU' clipping
+    # was applied — see flag_channels()).
+    P_raw = None
+    if 'Q' in raw_data and 'U' in raw_data:
+        Q_raw = np.asarray(raw_data['Q'])
+        U_raw = np.asarray(raw_data['U'])
+        P_raw = np.sqrt(Q_raw**2 + U_raw**2)
+
     for idx, stokes in enumerate(stokes_params):
         ax = axes[idx]
         
@@ -2061,20 +2131,33 @@ def plot_flagging_diagnostic(raw_data: Dict,
                    color=colors[stokes], alpha=0.8, markersize=5,
                    label='Kept', zorder=3)
         
+        # Overlay P = sqrt(Q²+U²) translucently on the Q and U panels
+        if stokes in ('Q', 'U') and P_raw is not None:
+            ax.plot(lambda_sq, P_raw, marker='.', linestyle='', color='purple',
+                   alpha=0.5, markersize=5, label='P = √(Q²+U²)', zorder=1.5)
+
         # Plot spectral baseline polynomial fit (for any Stokes parameter that was fit)
         if 'Spectral baseline clipping' in flagging_info.get('flag_counts', {}):
             spectral_clip_info = flagging_info['flag_counts']['Spectral baseline clipping']
             if 'fit' in spectral_clip_info and spectral_clip_info['fit'] is not None:
                 fits_dict = spectral_clip_info['fit']
-                
+
                 # Check if this Stokes parameter has a fit
                 if stokes in fits_dict:
                     fit = fits_dict[stokes]
                     # Evaluate polynomial: X = poly(freq_normalized)
                     freq_norm = (freq_hz - fit['freq_mean']) / fit['freq_std']
                     X_model = np.polyval(fit['coef'], freq_norm)
-                    ax.plot(lambda_sq, X_model, '-', color='orange', linewidth=2.5, 
+                    ax.plot(lambda_sq, X_model, '-', color='orange', linewidth=2.5,
                            alpha=0.8, label=f'Spectral baseline ({stokes})', zorder=2)
+
+                # Overlay the P = sqrt(Q²+U²) fit (if 'QU' spectral clipping was applied)
+                if stokes in ('Q', 'U') and 'QU' in fits_dict:
+                    qu_fit = fits_dict['QU']
+                    freq_norm_qu = (freq_hz - qu_fit['freq_mean']) / qu_fit['freq_std']
+                    P_model = np.polyval(qu_fit['coef'], freq_norm_qu)
+                    ax.plot(lambda_sq, P_model, '--', color='purple', linewidth=2.0,
+                           alpha=0.5, label='Spectral baseline (P)', zorder=1.5)
         
         # Highlight explicitly flagged frequency regions (RFI bands specified by user)
         # Individual channel flags are shown as 'x' markers only, no shading
