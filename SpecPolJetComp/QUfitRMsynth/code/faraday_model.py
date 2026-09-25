@@ -12,6 +12,7 @@ import pickle
 import copy
 import time
 import json
+import contextlib
 import multiprocessing
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Union, Literal
@@ -2315,56 +2316,34 @@ class FaradayFitter:
         else:
             run_kwargs['print_progress'] = False
         
+        # Select sampler class based on type
+        SamplerClass = dynesty.DynamicNestedSampler if self.sampler_type == 'dynamic' else dynesty.NestedSampler
+        
+        # Get periodic boundaries from prior transform
+        periodic = self.setup.prior_transform.periodic if len(self.setup.prior_transform.periodic) > 0 else None
+        
+        use_pool = self.use_pool and self.n_cores > 1
+        
         # Track time
         start_time = time.time()
         
-        # Run with or without multiprocessing
-        if self.use_pool and self.n_cores > 1:
-            
-            print(f"\nUsing {self.n_cores} CPUs for parallel processing")
-            print("\nRunning nested sampling...")
-            
-            # Use context manager for proper cleanup
-            with Pool(self.n_cores) as pool:
-                # Select sampler class based on type
-                if self.sampler_type == 'dynamic':
-                    SamplerClass = dynesty.DynamicNestedSampler
-                else:  # 'static'
-                    SamplerClass = dynesty.NestedSampler
-                
-                # Get periodic boundaries from prior transform
-                periodic = self.setup.prior_transform.periodic if len(self.setup.prior_transform.periodic) > 0 else None
-                
-                sampler = SamplerClass(
-                    loglikelihood=self.setup.log_likelihood,
-                    prior_transform=self.setup.prior_transform,
-                    ndim=self.setup.ndim,
-                    periodic=periodic,
-                    # periodic=None, # hard code as a check
-                    pool=pool,
-                    queue_size=self.n_cores,
-                    **sampler_kwargs
-                )
-                
-                self.sampler = sampler
-                sampler.run_nested(**run_kwargs)
-        else:
-            print("\nRunning nested sampling (single-core)...")
-            
-            # Select sampler class based on type
-            if self.sampler_type == 'dynamic':
-                SamplerClass = dynesty.DynamicNestedSampler
-            else:  # 'static'
-                SamplerClass = dynesty.NestedSampler
-            
-            # Get periodic boundaries from prior transform
-            periodic = self.setup.prior_transform.periodic if len(self.setup.prior_transform.periodic) > 0 else None
+        # Use context manager for proper cleanup; nullcontext() when running single-core
+        # so the sampler construction and run_nested() call only need writing once.
+        with (Pool(self.n_cores) if use_pool else contextlib.nullcontext()) as pool:
+            if use_pool:
+                print(f"\nUsing {self.n_cores} CPUs for parallel processing")
+                print("\nRunning nested sampling...")
+                pool_kwargs = {'pool': pool, 'queue_size': self.n_cores}
+            else:
+                print("\nRunning nested sampling (single-core)...")
+                pool_kwargs = {}
             
             sampler = SamplerClass(
                 loglikelihood=self.setup.log_likelihood,
                 prior_transform=self.setup.prior_transform,
                 ndim=self.setup.ndim,
                 periodic=periodic,
+                **pool_kwargs,
                 **sampler_kwargs
             )
             
@@ -2552,13 +2531,15 @@ class FaradayFitter:
         - (a, b) pairs are replaced with (p0, psi_0) 
         - All other parameters remain unchanged
         - Values are NOT unwrapped (simple math transformation only)
+        - (a, b) are taken in the intrinsic (lambda^2=0) frame, matching
+          param_summary, print_summary(), save_json(), and samples_processed
         
         Sets:
         - self.samples_derived: Array with replaced parameters
         - self.param_names_derived: Names for derived columns
         """
         param_names = self.setup.param_names
-        samples = self.samples
+        samples = self._get_intrinsic_samples()
         
         processed_samples_list = []
         processed_names_list = []
@@ -2628,7 +2609,7 @@ class FaradayFitter:
         if lambda_sq_ref is None:
             self._intrinsic_samples_cache = self.samples
         else:
-            self._intrinsic_samples_cache = convert_ref_samples_to_intrinsic(
+            self._intrinsic_samples_cache, _ = convert_ref_samples_to_intrinsic(
                 self.samples, self.setup.param_names, self.setup.model, lambda_sq_ref
             )
         return self._intrinsic_samples_cache

@@ -1718,14 +1718,18 @@ def process_axial_parameter(a: np.ndarray, b: np.ndarray, weights: np.ndarray,
 def convert_ref_samples_to_intrinsic(samples: np.ndarray,
                                      param_names: list,
                                      model,
-                                     lambda_sq_ref: float) -> np.ndarray:
+                                     lambda_sq_ref: float) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Convert reference-band (a_ref, b_ref) columns in posterior samples to
     intrinsic (a_int, b_int) using the per-component transfer factor.
 
-    For each sample and each component, the shape parameters are used to
-    reconstruct a temporary component, compute K = compute_transfer_factor(λ²_ref),
-    and then A_int = (a_ref + i·b_ref) / K is stored back into the samples array.
+    For each component, K = compute_transfer_factor(λ²_ref) is computed for
+    every sample at once where it has a closed form (ThinComponent,
+    ThinPowerLawComponent, and the N≈2 branch of ThickComponent), and only
+    falls back to a per-sample loop for ThickComponent samples with N far
+    from 2, which need the numerical Faraday-depth-grid integral in
+    compute_polarization(). A_int = (a_ref + i·b_ref) / K is then stored
+    back into the samples array.
 
     Args:
         samples: Posterior samples array (n_samples, n_params)
@@ -1734,10 +1738,16 @@ def convert_ref_samples_to_intrinsic(samples: np.ndarray,
         lambda_sq_ref: Reference wavelength squared in m²
 
     Returns:
-        New samples array with (a, b) columns replaced by intrinsic values
+        (samples_int, K_by_component): samples_int has (a, b) columns
+        replaced by intrinsic values. K_by_component maps each component's
+        name to its per-sample complex transfer factor K, the same K used
+        for that component's a/b conversion, so callers that need the
+        reference-band amplitude scale (e.g. MAS debiasing, which must be
+        applied before this conversion) don't have to recompute it.
     """
     samples_int = samples.copy()
     name_to_idx = {name: i for i, name in enumerate(param_names)}
+    K_by_component = {}
 
     tied_phi_rm_idx = name_to_idx.get('tied_phi_rm')
 
@@ -1755,44 +1765,47 @@ def convert_ref_samples_to_intrinsic(samples: np.ndarray,
         if isinstance(comp, ThinPowerLawComponent):
             phi_rm_idx = name_to_idx.get(f'{comp_name}_phi_rm', tied_phi_rm_idx)
             beta_idx = name_to_idx.get(f'{comp_name}_beta')
-            for s in range(len(samples)):
-                tmp = ThinPowerLawComponent(
-                    a=1.0, b=0.0,
-                    phi_rm=samples[s, phi_rm_idx],
-                    beta=samples[s, beta_idx],
-                    lambda_sq_0=comp.lambda_sq_0
-                )
-                K = tmp.compute_transfer_factor(lambda_sq_ref)
-                A_int = (a_ref[s] + 1j * b_ref[s]) / K
-                samples_int[s, a_idx] = A_int.real
-                samples_int[s, b_idx] = A_int.imag
+            phi_rm = samples[:, phi_rm_idx]
+            beta = samples[:, beta_idx]
+            K_samples = ((lambda_sq_ref / comp.lambda_sq_0) ** (-beta / 2.0)
+                        * np.exp(2j * phi_rm * lambda_sq_ref))
 
         elif isinstance(comp, ThinComponent):
             phi_rm_idx = name_to_idx.get(f'{comp_name}_phi_rm', tied_phi_rm_idx)
-            for s in range(len(samples)):
-                tmp = ThinComponent(a=1.0, b=0.0, phi_rm=samples[s, phi_rm_idx])
-                K = tmp.compute_transfer_factor(lambda_sq_ref)
-                A_int = (a_ref[s] + 1j * b_ref[s]) / K
-                samples_int[s, a_idx] = A_int.real
-                samples_int[s, b_idx] = A_int.imag
+            phi_rm = samples[:, phi_rm_idx]
+            K_samples = np.exp(2j * phi_rm * lambda_sq_ref)
 
         elif isinstance(comp, ThickComponent):
             phi_peak_idx = name_to_idx.get(f'{comp_name}_phi_peak')
             sigma_phi_idx = name_to_idx.get(f'{comp_name}_sigma_phi')
             N_idx = name_to_idx.get(f'{comp_name}_N')
-            for s in range(len(samples)):
-                tmp = ThickComponent(
-                    a=1.0, b=0.0,
-                    phi_peak=samples[s, phi_peak_idx],
-                    sigma_phi=samples[s, sigma_phi_idx],
-                    N=samples[s, N_idx]
-                )
-                K = tmp.compute_transfer_factor(lambda_sq_ref)
-                A_int = (a_ref[s] + 1j * b_ref[s]) / K
-                samples_int[s, a_idx] = A_int.real
-                samples_int[s, b_idx] = A_int.imag
+            phi_peak = samples[:, phi_peak_idx]
+            sigma_phi = samples[:, sigma_phi_idx]
+            N = samples[:, N_idx]
 
-    return samples_int
+            K_samples = np.empty(len(samples), dtype=complex)
+            gaussian_mask = np.abs(N - 2.0) < 1e-5
+
+            # Analytic Gaussian (N≈2) case, matches ThickComponent.compute_polarization's
+            # own analytic branch, vectorized directly across all such samples.
+            K_samples[gaussian_mask] = (
+                np.exp(2j * phi_peak[gaussian_mask] * lambda_sq_ref)
+                * np.exp(-2 * sigma_phi[gaussian_mask]**2 * lambda_sq_ref**2)
+            )
+
+            # General N needs the numerical Faraday-depth-grid FT; looped only
+            # over the (usually few or zero) samples that land here.
+            for s in np.nonzero(~gaussian_mask)[0]:
+                tmp = ThickComponent(a=1.0, b=0.0, phi_peak=phi_peak[s],
+                                     sigma_phi=sigma_phi[s], N=N[s])
+                K_samples[s] = tmp.compute_transfer_factor(lambda_sq_ref)
+
+        A_int = (a_ref + 1j * b_ref) / K_samples
+        samples_int[:, a_idx] = A_int.real
+        samples_int[:, b_idx] = A_int.imag
+        K_by_component[comp_name] = K_samples
+
+    return samples_int, K_by_component
 
 
 def process_posterior_modes(results: 'FaradayFitter',
@@ -1822,18 +1835,20 @@ def process_posterior_modes(results: 'FaradayFitter',
     print("="*70)
     
     # Extract data from results object
-    samples = results.samples
+    samples_ref = results.samples  # reference-band frame; kept for MAS debiasing below
+    samples = samples_ref
     weights = results.weights
     param_names = results.setup.param_names
     logl = results.logl
 
     # Convert reference-band samples to intrinsic parameterisation if needed
+    K_by_component = None
     lambda_sq_ref = getattr(results.setup, 'lambda_sq_ref', None)
     if lambda_sq_ref is not None:
         print(f"Converting posterior samples to intrinsic parameterisation "
               f"(\u03bb\u00b2_ref = {lambda_sq_ref:.4f} m\u00b2)...")
-        samples = convert_ref_samples_to_intrinsic(
-            samples, param_names, results.setup.model, lambda_sq_ref
+        samples, K_by_component = convert_ref_samples_to_intrinsic(
+            samples_ref, param_names, results.setup.model, lambda_sq_ref
         )
 
     # Normalize weights
@@ -1919,17 +1934,30 @@ def process_posterior_modes(results: 'FaradayFitter',
                     print(f"    Std log(L): {mode_result['likelihood_std']:.2f}")
                     print(f"    N assigned: {mode_result['n_samples']}, N in HDI_68: {mode_result.get('n_in_hdi_68', mode_result['n_samples'])}")
                 
-                # Process p₀ (polarization fraction) with MAS bias correction
-                p_raw = np.sqrt(a_samples**2 + b_samples**2)
-                if sigma_p is not None and sigma_p > 0 and np.median(p_raw) / sigma_p >= 3.0:
-                    p0_samples = np.sqrt(np.maximum(p_raw**2 - sigma_p_sq, 0.0))
+                # Process p₀ (polarization fraction) with MAS bias correction.
+                # sigma_p characterises noise on the amplitude as actually observed
+                # (reference band), so debiasing must happen there before converting
+                # to intrinsic — subtracting a reference-band noise term from an
+                # already-rescaled intrinsic amplitude would mix two different scales
+                # whenever |K| != 1 (ThickComponent).
+                a_ref_samples = samples_ref[:, i]
+                b_ref_samples = samples_ref[:, b_idx]
+                p_raw_ref = np.sqrt(a_ref_samples**2 + b_ref_samples**2)
+
+                if sigma_p is not None and sigma_p > 0 and np.median(p_raw_ref) / sigma_p >= 3.0:
+                    p0_ref_debiased = np.sqrt(np.maximum(p_raw_ref**2 - sigma_p_sq, 0.0))
                     print(f"\n  MAS correction applied to all samples "
-                          f"(median SNR={np.median(p_raw)/sigma_p:.2f} >= 3)")
+                          f"(median SNR={np.median(p_raw_ref)/sigma_p:.2f} >= 3)")
                 else:
-                    p0_samples = p_raw
+                    p0_ref_debiased = p_raw_ref
                     if sigma_p is not None and sigma_p > 0:
                         print(f"\n  MAS correction skipped "
-                              f"(median SNR={np.median(p_raw)/sigma_p:.2f} < 3)")
+                              f"(median SNR={np.median(p_raw_ref)/sigma_p:.2f} < 3)")
+
+                if K_by_component is not None:
+                    p0_samples = p0_ref_debiased / np.abs(K_by_component[comp_name])
+                else:
+                    p0_samples = p0_ref_debiased
                 p0_name = comp_name + '_p0'
                 print(f"\n\n{p0_name} (polarization fraction):")
                 p0_result_list = process_linear_parameter(p0_samples, weights,
@@ -2563,15 +2591,11 @@ def _save_diagnostic_plots(mode_results: Dict, samples: np.ndarray,
         
         if result['type'] == 'linear':
             if param_name.endswith('_p0'):
-                comp_name = param_name[:-3]
-                a_name = comp_name + '_a'
-                b_name = comp_name + '_b'
-                if a_name in param_names and b_name in param_names:
-                    a_idx = param_names.index(a_name)
-                    b_idx = param_names.index(b_name)
-                    x = np.sqrt(samples[:, a_idx]**2 + samples[:, b_idx]**2)
-                else:
-                    continue
+                # Use the array that was actually processed (debiased in the
+                # reference-band frame, then converted to intrinsic) rather than
+                # recomputing sqrt(a_int^2 + b_int^2) from samples, which would
+                # skip that debiasing/conversion and no longer match the modes.
+                x = result['unwrapped_samples']
             elif param_name in param_names:
                 idx = param_names.index(param_name)
                 x = samples[:, idx]
