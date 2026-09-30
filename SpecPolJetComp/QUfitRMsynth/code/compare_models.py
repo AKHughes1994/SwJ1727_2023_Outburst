@@ -19,11 +19,18 @@ from astropy.time import Time
 
 ITERATE_ALL = True   # False → process TEST_DIR only
 
-_REPO_ROOT = Path(__file__).parent.parent
-
-RESULTS_DIR = _REPO_ROOT / 'results' / 'J1727'
-QU_TEXT_DIR = _REPO_ROOT / 'files'   / 'J1727' / 'QU_text'
-SUMMARY_DIR = _REPO_ROOT / 'files'   / 'J1727' / 'summary'
+RESULTS_DIR = Path(
+    '/home/andrewhughes/Projects/X-KAT/SwiftJ1727/new_meerkat/SpectroPol'
+    '/publication_work/QU_phenom/results/J1727'
+)
+QU_TEXT_DIR = Path(
+    '/home/andrewhughes/Projects/X-KAT/SwiftJ1727/new_meerkat/SpectroPol'
+    '/publication_work/QU_phenom/files/J1727/QU_text'
+)
+SUMMARY_DIR = Path(
+    '/home/andrewhughes/Projects/X-KAT/SwiftJ1727/new_meerkat/SpectroPol'
+    '/publication_work/QU_phenom/files/J1727/summary'
+)
 TEST_DIR = RESULTS_DIR / 'SwiftJ1727_WAPITI_20231006'
 
 # =============================================================================

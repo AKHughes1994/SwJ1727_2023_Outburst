@@ -2261,6 +2261,7 @@ class FaradayFitter:
         
         # Summary statistics (computed after fit)
         self.param_summary = None
+        self.param_summary_ref_frame = None
         self.chi_squared_best = None
         self.chi_squared_mean = None
         self.chi_squared_std = None
@@ -2269,11 +2270,7 @@ class FaradayFitter:
         self.chi_squared_std_history = None
         self.bic = None
         self.aic = None
-        # Derived samples (populated by compute_summaries in model module)
-        # Replaces (a, b) → (p0, psi_0) via direct math transformation
-        self.samples_derived = None
-        self.param_names_derived = None
-        
+
         # Processed samples (populated by process_posterior_modes in processing module)
         # Unwrapped/continuous around modes for coherent statistics
         self.samples_processed = None
@@ -2475,15 +2472,14 @@ class FaradayFitter:
         self.param_summary = self._compute_param_summary()
         print(f"   Parameter summaries: {time.time()-t_start:.1f}s")
         
+        t_start = time.time()
+        self.param_summary_ref_frame = self._compute_param_summary_ref_frame()
+        print(f"   Parameter summaries (reference frame, for corner_cartesian): {time.time()-t_start:.1f}s")
+        
         # Compute and add derived parameters (p0, psi_0) from (a, b)
         t_start = time.time()
         self._add_derived_parameters()
         print(f"   Derived parameters (p0, psi_0): {time.time()-t_start:.1f}s")
-        
-        # Build samples_derived array (replace a/b with p0/psi_0)
-        t_start = time.time()
-        self._build_samples_derived()
-        print(f"   Derived samples array: {time.time()-t_start:.1f}s")
         
         print("Computing model comparison metrics...")
         t_start = time.time()
@@ -2522,73 +2518,6 @@ class FaradayFitter:
         
         print(f"Total χ² computation: {time.time()-t0:.1f}s")
         print("Summary computation complete!")
-    
-    def _build_samples_derived(self):
-        """
-        Build samples_derived array by replacing (a, b) with (p0, psi_0).
-        
-        Creates interpretable parameter space for plotting where:
-        - (a, b) pairs are replaced with (p0, psi_0) 
-        - All other parameters remain unchanged
-        - Values are NOT unwrapped (simple math transformation only)
-        - (a, b) are taken in the intrinsic (lambda^2=0) frame, matching
-          param_summary, print_summary(), save_json(), and samples_processed
-        
-        Sets:
-        - self.samples_derived: Array with replaced parameters
-        - self.param_names_derived: Names for derived columns
-        """
-        param_names = self.setup.param_names
-        samples = self._get_intrinsic_samples()
-        
-        processed_samples_list = []
-        processed_names_list = []
-        skip_indices = set()
-        ab_replacements = {}
-        
-        # First pass: identify a/b pairs and mark for replacement
-        for i, param_name in enumerate(param_names):
-            if param_name.endswith('_a'):
-                comp_name = param_name[:-2]
-                b_name = comp_name + '_b'
-                
-                if b_name in param_names:
-                    b_idx = param_names.index(b_name)
-                    a_samples = samples[:, i]
-                    b_samples = samples[:, b_idx]
-                    
-                    # Compute derived parameters
-                    p0_samples = np.sqrt(a_samples**2 + b_samples**2)
-                    psi_samples = 0.5 * np.arctan2(b_samples, a_samples) * 180 / np.pi
-                    
-                    p0_name = comp_name + '_p0'
-                    psi_name = comp_name + '_psi_0'
-                    
-                    # Store replacement info
-                    ab_replacements[i] = (p0_samples, psi_samples, p0_name, psi_name)
-                    
-                    # Mark both a and b for skipping
-                    skip_indices.add(i)
-                    skip_indices.add(b_idx)
-        
-        # Second pass: build processed array
-        for i, param_name in enumerate(param_names):
-            if i in skip_indices:
-                # Replace a/b pair with p0/psi_0
-                if i in ab_replacements:
-                    p0_samples, psi_samples, p0_name, psi_name = ab_replacements[i]
-                    processed_samples_list.append(p0_samples)
-                    processed_names_list.append(p0_name)
-                    processed_samples_list.append(psi_samples)
-                    processed_names_list.append(psi_name)
-            else:
-                # Keep parameter as-is
-                processed_samples_list.append(samples[:, i])
-                processed_names_list.append(param_name)
-        
-        # Stack into array and store
-        self.samples_derived = np.column_stack(processed_samples_list)
-        self.param_names_derived = processed_names_list
     
     def _get_intrinsic_samples(self) -> np.ndarray:
         """
@@ -2653,23 +2582,19 @@ class FaradayFitter:
                     psi_name = comp_name + '_psi_0'
                     self.param_summary[psi_name] = psi_stats
     
-    def _compute_param_summary(self) -> Dict:
+    def _compute_param_summary_for(self, samples: np.ndarray) -> Dict:
         """
-        Compute parameter statistics using dynesty's built-in functions.
+        Compute parameter statistics using dynesty's built-in functions, for
+        whichever samples array is passed in.
 
-        Returns Cartesian parameters (in the intrinsic, lambda^2=0 frame — see
-        _get_intrinsic_samples()) with:
         - Mean and covariance from dyfunc.mean_and_cov() (full array)
         - Median, 68% CI, and 99% range from dyfunc.quantile() (per parameter)
 
         Returns:
             Dictionary with parameter names as keys and summary dicts as values
         """
-        intrinsic_samples = self._get_intrinsic_samples()
-
-        # Filter samples
-        good_mask = np.all(np.isfinite(intrinsic_samples), axis=1) & np.isfinite(self.weights) & (self.weights > 0)
-        samples_clean = intrinsic_samples[good_mask]
+        good_mask = np.all(np.isfinite(samples), axis=1) & np.isfinite(self.weights) & (self.weights > 0)
+        samples_clean = samples[good_mask]
         weights_clean = self.weights[good_mask]
         
         # Compute mean and covariance for all parameters at once
@@ -2719,6 +2644,15 @@ class FaradayFitter:
                     summary[comp_phi_rm_name] = tied_stats.copy()
         
         return summary
+
+    def _compute_param_summary(self) -> Dict:
+        """Parameter statistics in the intrinsic (lambda^2=0) frame — see _get_intrinsic_samples()."""
+        return self._compute_param_summary_for(self._get_intrinsic_samples())
+
+    def _compute_param_summary_ref_frame(self) -> Dict:
+        """Parameter statistics in the reference-band (lambda^2_ref) frame — matches self.samples,
+        the frame corner_cartesian.png actually plots."""
+        return self._compute_param_summary_for(self.samples)
     
     def _compute_bic(self) -> float:
         """

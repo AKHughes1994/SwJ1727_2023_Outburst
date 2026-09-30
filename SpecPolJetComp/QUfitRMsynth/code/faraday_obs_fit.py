@@ -24,6 +24,9 @@ from faraday_data import (DataLoader, IFitter, PolarizationData, FlaggingConfig,
 from faraday_processing import (process_posterior_modes, ProcessingConfig)
 
 
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
 def load_iono_rm(iono_loc, source_name, data_file=None):
     """
     Parse a spinifex output file and return the weighted-mean ionospheric RM
@@ -99,16 +102,15 @@ def load_iono_rm(iono_loc, source_name, data_file=None):
     return float(np.sum(w * rms) / np.sum(w)), float(1.0 / np.sqrt(np.sum(w)))
 
 
-def phi_range_from_rmclean(data_file_arg, threshold_frac, padding, fallback_phi_center=None):
+def load_rmsynth_fdf(data_file_arg, product):
     """
-    Derive phi_min/phi_max from non-negligible CLEAN components in the RMSynthesis
-    FDFmodel.dat output.  Mirrors the files→rmsynth path substitution used elsewhere.
+    Load (phi, amplitude) from an RMSynthesis output file for a data file.
+    Mirrors the files→rmsynth path substitution used elsewhere.
 
-    Returns (phi_min, phi_max) with `padding` added on each side.
-    Returns None if the model file cannot be found.
-    If the file exists but all components are zero, falls back to
-    (fallback_phi_center - padding, fallback_phi_center + padding) when provided,
-    otherwise returns None.
+    product: 'FDFmodel' (CLEAN components) or 'FDFclean' (CLEANed FDF spectrum)
+
+    Returns (phi_arr, amp_arr), or None if the data file isn't under a 'files'
+    directory or the output file cannot be found.
     """
     data_path = Path(data_file_arg).resolve()
     data_id_local = data_path.stem
@@ -121,15 +123,31 @@ def phi_range_from_rmclean(data_file_arg, threshold_frac, padding, fallback_phi_
     subdir_parts = [p for p in data_path.parts[files_idx + 1:-1] if p != 'QU_text']
     subdir = Path(*subdir_parts) if subdir_parts else Path('.')
 
-    rmclean_file = (base_dir / 'rmsynth' / subdir / data_id_local
-                    / f"{data_id_local}_rmsynth_FDFmodel.dat")
+    rmsynth_file = (base_dir / 'rmsynth' / subdir / data_id_local
+                    / f"{data_id_local}_rmsynth_{product}.dat")
 
-    if not rmclean_file.exists():
+    if not rmsynth_file.exists():
         return None
 
-    raw = np.loadtxt(rmclean_file)
-    phi_arr = raw[:, 0]
-    amp = np.sqrt(raw[:, 1]**2 + raw[:, 2]**2)
+    raw = np.loadtxt(rmsynth_file)
+    return raw[:, 0], np.sqrt(raw[:, 1]**2 + raw[:, 2]**2)
+
+
+def phi_range_from_rmclean(data_file_arg, threshold_frac, padding, fallback_phi_center=None):
+    """
+    Derive phi_min/phi_max from non-negligible CLEAN components in the RMSynthesis
+    FDFmodel.dat output.
+
+    Returns (phi_min, phi_max) with `padding` added on each side.
+    Returns None if the model file cannot be found.
+    If the file exists but all components are zero, falls back to
+    (fallback_phi_center - padding, fallback_phi_center + padding) when provided,
+    otherwise returns None.
+    """
+    clean_components = load_rmsynth_fdf(data_file_arg, 'FDFmodel')
+    if clean_components is None:
+        return None
+    phi_arr, amp = clean_components
 
     max_amp = np.max(amp)
     has_components = max_amp > 0 and np.any(amp > threshold_frac * max_amp)
@@ -158,16 +176,22 @@ MASTER_SEED = 25031995  # big day
 _seed_seq = np.random.SeedSequence(MASTER_SEED)
 rng = np.random.default_rng(MASTER_SEED)  # overridden per trial in the fit loop
 
-N_CORES = 15
+N_CORES = 15   # Or set to None to use N - 2 cores
 N_TRIALS = 1   # Repeat the fit N times with independent posterior draws; 1 = normal single run
 
 TIE_RM = False
-SKIP_IF_EXISTS = True  # If True, skip fitting and load existing .pkl if it exists
+SKIP_IF_EXISTS = False  # If True, skip fitting and load existing .pkl if it exists
 
 USE_RMCLEAN_PHI_RANGE = True   # Derive phi_min/phi_max from RMSynthesis CLEAN components
 REQUIRE_RMCLEAN       = True  # If True and no RMclean file found, exit instead of falling back
 RMCLEAN_THRESHOLD_FRAC = 1e-6  # Components > this fraction of peak amplitude are significant
 RMCLEAN_PHI_PADDING    = 25.0  # rad/m² added to each side of the derived range
+
+# FDF plot phi ranges, rad/m². Each is either None (auto-computed by the plot
+# function from the RMTF FWHM and the fitted RM values), a scalar for a symmetric
+# window (±value), or a (phi_min, phi_max) tuple for an asymmetric window.
+FDF_PHI_RANGE      = None   # Fit-results plot FDF panel
+FDF_DIAG_PHI_RANGE = 500.0  # Standalone FDF diagnostic plot (only when 'P' not in MODEL_TYPE)
 
 NLIVE_FACTOR = 150
 SLICE_FACTOR = 3.0
@@ -183,6 +207,41 @@ PHI_ISM_SIGMA    = +0.65          # Gaussian std for truncated prior (rad/m²)
 PHI_ISM_RANGE    = 3.5 * PHI_ISM_SIGMA  # Truncation half-width; set 0 for a fixed prior
 IONO_LOC         = Path(__file__).parent.parent / 'files' / 'spinifex_iono'  # spinifex dir or single file; None → iono_rm = 0
 IONO_SOURCE      = 'J1727'      # Case-insensitive substring match against first column of spinifex file
+
+# Prior configuration (source-specific — this is the block to tune per source)
+# Faraday depth (phi) prior range, rad/m². Search window for phi_rm / phi_peak.
+# Only used as-is when USE_RMCLEAN_PHI_RANGE (above) is False or no RMclean file
+# is found; otherwise the range is derived from the CLEAN components.
+PHI_MIN = -160.0
+PHI_MAX = 160.0
+
+# Thick-component sigma_phi prior max, rad/m². ~2x the FWHM where you lose ~50%
+# sensitivity to thick components; adjust based on expected source properties and
+# data quality.
+SIGMA_PHI_MAX = 50.0
+
+# Mixed S/T models: confine the first thin (S) component's phi_rm prior to this
+# narrow window (instead of the full [phi_min, phi_max] range) to break the S/T
+# degeneracy. Set to None to disable and use the full range instead.
+MIXED_ST_CONSTRAINED_PHI_RM = ('uniform', -20.0, 20.0)
+
+# Polarization angle (psi_0) prior shape. 'peaked' concentrates probability density
+# near PEAKED_ANGLE_DEG (and +90°, since the polar-conversion angle is degenerate
+# mod pi) — use when a preferred EVPA/psi_0 is expected a priori. Set
+# USE_PEAKED_ANGLE_PRIOR = False for a flat/uniform prior over the full psi_0_bounds
+# range instead (e.g. when there's no preferred angle).
+USE_PEAKED_ANGLE_PRIOR = False
+PEAKED_ANGLE_K         = 1.0   # Concentration of the peaked prior; higher = more peaked. Ignored if USE_PEAKED_ANGLE_PRIOR is False.
+PEAKED_ANGLE_DEG       = 0.0   # Preferred psi_0 peak location, degrees. Ignored if USE_PEAKED_ANGLE_PRIOR is False.
+
+# Reference wavelength squared (m²) for the sampled complex amplitude (a, b) of each
+# component, i.e. (a, b) is the polarisation at LAMBDA_SQ_REF rather than at lambda²=0.
+# Also sets the psi_0 peak rotation (phi_center * LAMBDA_SQ_REF) for the peaked prior.
+#   0.0  -> (a, b) is the intrinsic amplitude at lambda² = 0. Not valid with a
+#           power-law ('P') component (FitSetup exits: lambda_sq_0 would be 0).
+#   None -> disable the reference-band parameterisation entirely (power-law
+#           components then fall back to lambda_sq_0 = 0.05 m²).
+LAMBDA_SQ_REF = 0.05 # Set to None to disable reference-band parameterisation (power-law components fall back to lambda_sq_0 = 0.05 m²).
 
 
 # =============================================================================
@@ -236,16 +295,15 @@ else:
 # PRIOR DEFINITIONS
 # =============================================================================
 
-phi_min = -160.0
-phi_max = 160.0
+phi_min = PHI_MIN
+phi_max = PHI_MAX
 
 if '1014' in DATA_FILE_ARG:
     phi_min = -250.0
     phi_max = 250.0
 
-if '4U1630' in DATA_FILE_ARG:
-    phi_min = 1000.0
-    phi_max = 2000.0
+CLEAN_FDF = None         # (phi, amplitude) from RMSynthesis FDFclean.dat, for qualitative overlay on the fit plot
+CLEAN_COMPONENTS = None  # (phi, amplitude) from RMSynthesis FDFmodel.dat, plotted as a red centred step function
 
 if USE_RMCLEAN_PHI_RANGE:
     _rmclean_range = phi_range_from_rmclean(DATA_FILE_ARG, RMCLEAN_THRESHOLD_FRAC, RMCLEAN_PHI_PADDING,
@@ -260,33 +318,38 @@ if USE_RMCLEAN_PHI_RANGE:
             sys.exit(1)
         print(f"Falling back to default phi range: [{phi_min:.1f}, {phi_max:.1f}] rad/m²")
 
-sigma_phi_max = 50.0 # 2x the FWHM where you lose ~50% sensitivity to thick components, can adjust based on expected source properties and data quality
+    CLEAN_FDF = load_rmsynth_fdf(DATA_FILE_ARG, 'FDFclean')
+    CLEAN_COMPONENTS = load_rmsynth_fdf(DATA_FILE_ARG, 'FDFmodel')
+    for _name, _product in (('FDFclean', CLEAN_FDF), ('FDFmodel', CLEAN_COMPONENTS)):
+        if _product is not None:
+            print(f"Loaded RMclean {_name}.dat ({len(_product[0])} points) for fit-plot overlay")
+        else:
+            print(f"WARNING: RMclean {_name}.dat not found — fit plot will not show this overlay.")
+
+_PSI_0_DIST = 'peaked' if USE_PEAKED_ANGLE_PRIOR else 'uniform'
 
 # Using polar conversion style for intuitive p0 specification
 THIN_PRIOR = {
     'type': 'ThinComponent',
     'polar_conversion': {
         'p0_bounds': (0.0, 0.50, 'radial_uniform'),      # Uniform in p0 (no bias)
-        'psi_0_bounds': (-np.pi/2, np.pi/2, 'peaked'),       # Unbounded angle
-        'peaked_k':1.0, # Optional and equal to default,
-        'peaked_angle_deg': 0.0 # Optional and equal to default
+        'psi_0_bounds': (-np.pi/2, np.pi/2, _PSI_0_DIST),       # Unbounded angle
+        'peaked_k': PEAKED_ANGLE_K,
+        'peaked_angle_deg': PEAKED_ANGLE_DEG,
     },
     'phi_rm': ('uniform', phi_min, phi_max)
 }
 
-# For mixed S/T models, confine one S-component RM prior to a narrow window.
-MIXED_ST_CONSTRAINED_PHI_RM = ('uniform', -20.0, 20.0)
-
-# Thick component sigma_phi max adjustment
 THICK_PRIOR = {
     'type': 'ThickComponent',
     'polar_conversion': {
         'p0_bounds': (0.0, 0.50, 'radial_uniform'),      # Uniform in p0 (no bias)
-        'psi_0_bounds': (-np.pi/2, np.pi/2, 'peaked')       # Unbounded angle
-        #'psi_0_bounds': (-np.pi/2, np.pi/2, 'uniform')       # For 4U1630 Unbounded angle
+        'psi_0_bounds': (-np.pi/2, np.pi/2, _PSI_0_DIST),       # Unbounded angle
+        'peaked_k': PEAKED_ANGLE_K,
+        'peaked_angle_deg': PEAKED_ANGLE_DEG,
     },
     'phi_peak': ('uniform', phi_min, phi_max),
-    'sigma_phi': ('log_uniform', 1e-1, sigma_phi_max),
+    'sigma_phi': ('log_uniform', 1e-1, SIGMA_PHI_MAX),
     'N': ('log_uniform', 2.0, 50.0),
     'effective_width_mode': False
 }
@@ -295,7 +358,9 @@ POWERLAW_PRIOR = {
     'type': 'ThinPowerLawComponent',
     'polar_conversion': {
         'p0_bounds': (0.0, 0.50, 'radial_uniform'),
-        'psi_0_bounds': (-np.pi/2, np.pi/2, 'peaked')
+        'psi_0_bounds': (-np.pi/2, np.pi/2, _PSI_0_DIST),
+        'peaked_k': PEAKED_ANGLE_K,
+        'peaked_angle_deg': PEAKED_ANGLE_DEG,
     },
     'phi_rm': ('uniform', phi_min, phi_max),
     'beta': ('uniform', -5.0, 5.0),
@@ -452,7 +517,7 @@ for char in MODEL_TYPE:
         model.add_component(ThinComponent(a=0.1, b=0.0, phi_rm=0.0, name=name))
 
         thin_prior = THIN_PRIOR.copy()
-        if has_mixed_st and s_count == 1 and '4U1630' not in DATA_FILE_ARG and not TIE_RM:
+        if has_mixed_st and s_count == 1 and not TIE_RM and MIXED_ST_CONSTRAINED_PHI_RM is not None:
             thin_prior['phi_rm'] = MIXED_ST_CONSTRAINED_PHI_RM
         priors[name] = thin_prior
         
@@ -527,15 +592,13 @@ if CONSTRAIN_ISM_RM:
         print(f"CONSTRAIN_ISM_RM: {target} phi_rm prior → {ism_phi_prior}")
 
 print(f"\nModel type: {MODEL_TYPE}")
-setup = FitSetup(model, priors, data, enforce_ordering=True, tie_phi_rm=TIE_RM, lambda_sq_ref=0.05)
+setup = FitSetup(model, priors, data, enforce_ordering=True, tie_phi_rm=TIE_RM, lambda_sq_ref=LAMBDA_SQ_REF)
 print(f"Setup created: {setup.ndim} parameters")
 
 # =============================================================================
 # FITTING & RESULTS  (looped N_TRIALS times)
 # =============================================================================
-phi_range = 250
-if '4U1630' in DATA_FILE_ARG:
-    phi_range = 2500
+phi_range = FDF_PHI_RANGE
 
 for _trial in range(N_TRIALS):
     FIT_KWARGS['sampler']['rstate'] = np.random.default_rng(_seed_seq.spawn(1)[0])
@@ -568,12 +631,13 @@ for _trial in range(N_TRIALS):
 
     plot_fit_results(results, true_model=None, I_fitter=I_fitter, title=None,
                     filename=f"{data_id}_{MODEL_TYPE}{_sfx}_fit.pdf", output_dir=_plots_dir,
-                    plot_fdf_posterior_samples=True)
+                    plot_fdf_posterior_samples=True, phi_range=phi_range,
+                    clean_fdf=CLEAN_FDF, clean_components=CLEAN_COMPONENTS)
 
     plot_corner(
         samples=results.samples,
         param_names=results.setup.param_names,
-        param_summary=results.param_summary,
+        param_summary=results.param_summary_ref_frame,
         weights=results.weights,
         setup=results.setup,
         truths=None,
@@ -624,7 +688,7 @@ for _trial in range(N_TRIALS):
     )
 
     if 'P' not in MODEL_TYPE:
-        plot_fdf_diagnostic(results, phi_range=phi_range * 2, n_phi=4096, title=None, model_method='representative',
+        plot_fdf_diagnostic(results, phi_range=FDF_DIAG_PHI_RANGE, n_phi=4096, title=None, model_method='representative',
                            filename=f"{data_id}_{MODEL_TYPE}{_sfx}_fdf.png", output_dir=_plots_dir,
                            plot_posterior_samples=True)
 

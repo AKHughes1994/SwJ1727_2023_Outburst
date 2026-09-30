@@ -27,11 +27,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 from faraday_data import DataLoader, PolarizationData
 from faraday_utils import (ThinComponent, ThickComponent, ThinPowerLawComponent, CompositeModel,
-                           compute_polarization_quantities, compute_rmtf, rm_synthesis, C_LIGHT)
+                           compute_polarization_quantities, compute_rmtf, C_LIGHT)
 from faraday_model import FitSetup, FaradayFitter, update_model_from_params
 from faraday_plot import (plot_data_diagnostic, plot_fit_results, plot_corner,
                          plot_convergence, plot_fdf_diagnostic,
@@ -56,7 +56,7 @@ print(f"Output directory: {output_dir.absolute()}")
 
 # THIN SCREEN COMPONENTS (S1, S2, ...)
 THIN_COMPONENTS = [
-    {'p0': 0.02, 'psi_0_deg': -2.6, 'phi_rm': -5.76},  # S1 (e.g., ISM)
+    {'p0': 0.034, 'psi_0_deg': -17, 'phi_rm': -4.5},  # S1 (e.g., ISM)
     #{'p0': 0.01, 'psi_0_deg': 37, 'phi_rm': 0.0},     # S2 (e.g., Jet)
 ]
 
@@ -69,7 +69,7 @@ POWERLAW_COMPONENTS = [
 # THICK SCREEN COMPONENTS (T1, T2, ...)
 THICK_COMPONENTS = [
 #   {'p0': 0.006, 'psi_0_deg': 62.4, 'phi_peak': -88.0, 'sigma_phi': 20.8, 'N': 15.6},  # T1 (e.g., Source)
-    {'p0': 0.05, 'psi_0_deg': -35.0, 'phi_peak': 53.0, 'sigma_phi':35.0, 'N': 40},  # T2 (e.g., Jet)
+    {'p0': 0.056, 'psi_0_deg': -90.0, 'phi_peak': -4.06, 'sigma_phi':13, 'N': 30},  # T2 (e.g., Jet)
 ]
 
 # MODEL TO FIT
@@ -394,16 +394,73 @@ def generate_synthetic_data(model, output_file, freq_ghz_range=(0.9, 1.7), n_cha
 
 
 # =============================================================================
+# RM SYNTHESIS + CLEAN HELPER
+# =============================================================================
+
+def run_rmsynth_clean(data: PolarizationData,
+                      peak_threshold: str,
+                      finer_threshold: str) -> dict:
+    """
+    Run rmsynth1d and rmclean1d (RM-Tools CLI) on a temporary file written from
+    `data`.
+
+    Args:
+        data: PolarizationData to synthesise
+        peak_threshold: rmclean1d -c argument (log10 peak fraction)
+        finer_threshold: rmclean1d -w argument (log10 finer mask fraction)
+
+    Returns:
+        {'dirty', 'clean', 'components'}: each (phi, amplitude) from the
+        FDFdirty / FDFclean / FDFmodel output, or None if that output wasn't
+        produced (e.g. RM-Tools isn't installed).
+    """
+    freq_hz = C_LIGHT / np.sqrt(data.lambda_sq)
+    I_vals  = data.I   if data.I   is not None else np.ones_like(freq_hz)
+    I_err   = data.I_err if data.I_err is not None else np.full_like(freq_hz, 1e-3)
+
+    products = {'dirty': 'FDFdirty', 'clean': 'FDFclean', 'components': 'FDFmodel'}
+    out = dict.fromkeys(products)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        rmsynth_txt = tmpdir / 'obs_rmsynth.txt'
+        np.savetxt(rmsynth_txt,
+                   np.column_stack([freq_hz, I_vals, data.Q, data.U,
+                                    I_err, data.Q_err, data.U_err]))
+
+        for cmd in (['rmsynth1d', str(rmsynth_txt),
+                     '-S', '-o', '4', '-l', '2500', '--super-resolution'],
+                    ['rmclean1d', str(rmsynth_txt),
+                     '-S', '-c', peak_threshold, '-w', finer_threshold]):
+            try:
+                subprocess.run(cmd, check=False, capture_output=True)
+            except FileNotFoundError:
+                print(f'  WARNING: {cmd[0]} not found — RM-Tools products unavailable')
+                return out
+
+        for key, product in products.items():
+            fdf_file = tmpdir / f'obs_rmsynth_{product}.dat'
+            if fdf_file.exists():
+                fdf_dat = np.loadtxt(fdf_file)
+                out[key] = (fdf_dat[:, 0], np.hypot(fdf_dat[:, 1], fdf_dat[:, 2]))
+
+    return out
+
+
+# =============================================================================
 # PRESENTATION SUMMARY PLOT
 # =============================================================================
 
 def plot_presentation_summary(results: 'FitResults',
                               true_model: Optional['CompositeModel'] = None,
+                              show_true_model: bool = False,
+                              p_ylim_max: Optional[float] = None,
                               n_posterior_samples: int = 100,
                               phi_range: Optional[float] = None,
                               n_phi: int = 2048,
                               weight_type: str = 'variance',
                               model_method: str = 'representative',
+                              rmsynth_peak_threshold: str = '-10',
+                              rmsynth_finer_threshold: str = '-6',
                               title: Optional[str] = None,
                               filename: Optional[str] = None,
                               output_dir: Optional[Path] = None,
@@ -414,18 +471,30 @@ def plot_presentation_summary(results: 'FitResults',
     Panels:
     - Top-left: Fractional polarization p vs λ² with posterior credible bands
     - Bottom-left: EVPA ψ vs λ² with posterior credible bands
-    - Top-right: Observed FDF from RM synthesis of data (linear scale)
+    - Top-right: Observed FDF from RM synthesis + CLEAN of the data (linear
+      scale), showing the CLEANed FDF and CLEAN components, with the dirty
+      FDF underlaid as a translucent grey curve
     - Bottom-right: Intrinsic model component FDFs with posterior sample bands
+
+    RM synthesis and CLEAN for the top-right panel are run via the
+    rmsynth1d/rmclean1d CLI tools on a temporary file written from the data
+    attached to results (as in plot_paper_example).
 
     Args:
         results: FitResults object from fitting
         true_model: Optional true model for overplotting (synthetic data)
+        show_true_model: If True and true_model is provided, overplot it on
+                        the p(λ²) and ψ(λ²) panels
+        p_ylim_max: Optional upper y-limit for the p(λ²) panel. Lower limit
+                   is always pinned to 0.0. Auto-scaled if None.
         n_posterior_samples: Number of posterior draws for bands
         phi_range: Faraday depth range (±phi_range). Auto-computed if None.
         n_phi: Number of Faraday depth grid points
         weight_type: Weighting for RM synthesis ('variance' or 'uniform')
         model_method: Method for FDF model parameters ('representative', 'median',
                      'mean', 'map', 'mode')
+        rmsynth_peak_threshold: rmclean1d -c argument (log10 peak fraction)
+        rmsynth_finer_threshold: rmclean1d -w argument (log10 finer mask fraction)
         title: Optional figure title
         filename: If provided, save figure to disk
         output_dir: Directory for saving
@@ -435,15 +504,15 @@ def plot_presentation_summary(results: 'FitResults',
         Figure object
     """
     setup_publication_quality()
-
-    fig, axes = plt.subplots(2, 2, figsize=(13.3, 7.5))
+    
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5))
     ax_p, ax_fdf_obs = axes[0]
     ax_psi, ax_fdf_model = axes[1]
-
+    
     data = results.setup.data
     lambda_sq = data.lambda_sq
     lambda_sq_fine = np.linspace(lambda_sq.min(), lambda_sq.max(), 2000)
-
+    
     # --- Sample posterior for credible bands ---
     posterior_fine = []
     if n_posterior_samples > 0:
@@ -457,7 +526,7 @@ def plot_presentation_summary(results: 'FitResults',
                                      results.setup.param_names,
                                      lambda_sq_ref=getattr(results.setup, "lambda_sq_ref", None))
             posterior_fine.append(model_sample.compute_polarization(lambda_sq_fine))
-
+    
     # Compute percentile bands on fine grid
     if posterior_fine:
         P_abs_fine = np.array([np.abs(P) for P in posterior_fine])
@@ -466,68 +535,68 @@ def plot_presentation_summary(results: 'FitResults',
         psi_pct = np.percentile(psi_fine, [2.5, 16, 50, 84, 97.5], axis=0)
     else:
         p_pct = psi_pct = None
-
+    
     # Compute observed p and ψ with errors (Ricean debiased)
     p_data, p_err, chi_data, chi_err = compute_polarization_quantities(
         data.Q, data.U, data.Q_err, data.U_err,
         method='mc', n_samples=1000, debias=True
     )
     psi_data_deg = np.degrees(chi_data)
-
+    
     # ========================================================================
     # Top-left: Fractional polarization p vs λ²
     # ========================================================================
     if p_pct is not None:
         ax_p.fill_between(lambda_sq_fine, p_pct[1], p_pct[3],
-                          color='C0', alpha=0.25, zorder=3, label='68% CI')
+                          color='C0', alpha=0.25, zorder=4)
         ax_p.plot(lambda_sq_fine, p_pct[2], '-', color='C0',
-                  linewidth=1.5, alpha=0.8, zorder=4, label='Median')
+                  linewidth=2.0, alpha=0.8, zorder=5)
 
     p_lower, p_upper = p_err
     ax_p.errorbar(lambda_sq, p_data, yerr=[p_lower, p_upper],
                   fmt='o', markerfacecolor='lightgrey', markeredgecolor='black',
                   ecolor='black', alpha=1.0, markersize=4, markeredgewidth=1,
-                  zorder=5, label='Data')
+                  zorder=3)
 
-    if true_model is not None:
+    if true_model is not None and show_true_model:
         P_true_fine = true_model.compute_polarization(lambda_sq_fine)
         ax_p.plot(lambda_sq_fine, np.abs(P_true_fine), '-', color='black',
-                  linewidth=2.0, label='True model', zorder=6)
+                  linewidth=2.0, zorder=6)
 
-    ax_p.set_xlabel(r'$\lambda^2$ (m$^2$)')
-    ax_p.set_ylabel('Fractional Polarisation')
-    ax_p.legend(loc='best', framealpha=0.9, fontsize=8)
+    ax_p.set_ylabel(r'Lin. Pol. Fraction: $p(\lambda^2)$', fontsize=14)
     ax_p.grid(True, alpha=0.3)
+    ax_p.set_ylim(bottom=0.0, top=p_ylim_max)
+    ax_p.tick_params(axis='x', labelbottom=False)
     add_ticks_all_sides(ax_p)
-
+    
     # ========================================================================
     # Bottom-left: EVPA ψ vs λ²
     # ========================================================================
     if psi_pct is not None:
         ax_psi.fill_between(lambda_sq_fine, psi_pct[1], psi_pct[3],
-                            color='C0', alpha=0.25, zorder=3)
+                            color='C0', alpha=0.25, zorder=4)
         ax_psi.plot(lambda_sq_fine, psi_pct[2], '-', color='C0',
-                    linewidth=1.5, alpha=0.8, zorder=4)
+                    linewidth=2.0, alpha=0.8, zorder=5)
 
     chi_lower, chi_upper = chi_err
     ax_psi.errorbar(lambda_sq, psi_data_deg,
                     yerr=[np.degrees(chi_lower), np.degrees(chi_upper)],
                     fmt='o', markerfacecolor='lightgrey', markeredgecolor='black',
                     ecolor='black', alpha=1.0, markersize=4, markeredgewidth=1,
-                    zorder=5)
+                    zorder=3)
 
-    if true_model is not None:
+    if true_model is not None and show_true_model:
         P_true_fine = true_model.compute_polarization(lambda_sq_fine)
         psi_true = np.degrees(np.angle(P_true_fine) / 2)
         ax_psi.plot(lambda_sq_fine, psi_true, '-', color='black',
                     linewidth=2.0, zorder=6)
-
-    ax_psi.set_xlabel(r'$\lambda^2$ (m$^2$)')
-    ax_psi.set_ylabel('EVPA (deg)')
+    
+    ax_psi.set_xlabel(r'$\lambda^2$ (m$^2$)', fontsize=14)
+    ax_psi.set_ylabel(r'$\psi(\lambda^2)$ (deg)', fontsize=14)
     ax_psi.grid(True, alpha=0.3)
     ax_psi.set_ylim(-90, 90)
     add_ticks_all_sides(ax_psi)
-
+    
     # ========================================================================
     # FDF setup (shared by both right panels)
     # ========================================================================
@@ -538,7 +607,7 @@ def plot_presentation_summary(results: 'FitResults',
                                  lambda_sq_ref=getattr(results.setup, "lambda_sq_ref", None))
     else:
         fdf_model = results.get_best_fit_model(method=model_method)
-
+    
     # Auto-compute phi_range from RMTF and fitted RMs
     if phi_range is None:
         _, rmtf_props = compute_rmtf(lambda_sq, np.array([0.0]),
@@ -555,33 +624,40 @@ def plot_presentation_summary(results: 'FitResults',
             rm_extent = max(abs(max(rm_vals) + 2*fwhm), abs(min(rm_vals) - 2*fwhm))
         else:
             rm_extent = 0.0
-        phi_range = max(10.0 * fwhm, rm_extent, 100.0)
-
+        phi_range = max(4.0 * fwhm, rm_extent, 100.0)
+    
     phi_grid = np.linspace(-phi_range, phi_range, n_phi)
-    phi_grid_wide = np.linspace(-5*phi_range, 5*phi_range, 5*n_phi)
-    n_start = 2 * n_phi
-    n_end = 3 * n_phi
-
-    # Observed FDF from data
-    observed_fdf = rm_synthesis(data, phi_grid_wide, weight_type=weight_type)[n_start:n_end]
 
     # ========================================================================
-    # Top-right: Observed FDF (linear scale)
+    # RM synthesis and CLEAN on the observed data (top-right panel)
     # ========================================================================
-    ax_fdf_obs.plot(phi_grid, np.abs(observed_fdf), color='black', linewidth=2.0,
-                    label='|F(φ)|', zorder=10)
-    ax_fdf_obs.plot(phi_grid, np.real(observed_fdf), 'b--', linewidth=1.0, alpha=0.7,
-                    label='Re')
-    ax_fdf_obs.plot(phi_grid, np.imag(observed_fdf), 'r--', linewidth=1.0, alpha=0.7,
-                    label='Im')
+    rmsynth = run_rmsynth_clean(data, rmsynth_peak_threshold, rmsynth_finer_threshold)
+    if rmsynth['clean'] is None:
+        print('  WARNING: rmclean output not found — observed FDF panel will be incomplete')
+
+    # ========================================================================
+    # Top-right: Observed FDF (linear scale) -- dirty (grey), clean, components
+    # ========================================================================
+    if rmsynth['dirty'] is not None:
+        ax_fdf_obs.plot(*rmsynth['dirty'], color='grey', alpha=0.4,
+                        linewidth=1.0, zorder=1)
+    if rmsynth['components'] is not None:
+        ax_fdf_obs.plot(*rmsynth['components'], drawstyle='steps-mid',
+                        color='C0', linewidth=1.0, alpha=0.8, zorder=8)
+    if rmsynth['clean'] is not None:
+        ax_fdf_obs.plot(*rmsynth['clean'], color='black', linewidth=1.5, zorder=10)
     ax_fdf_obs.axhline(0, color='gray', linestyle=':', linewidth=0.5)
     ax_fdf_obs.axvline(0, color='gray', linestyle=':', linewidth=0.5)
-    ax_fdf_obs.set_xlabel(r'Faraday Depth $\phi$ (rad/m$^2$)')
-    ax_fdf_obs.set_ylabel('F(φ) (fractional)')
-    ax_fdf_obs.legend(loc='best', framealpha=0.9, fontsize=8)
+    ax_fdf_obs.set_xlim(-phi_range, phi_range)
+    ax_fdf_obs.set_ylabel(r'F($\phi_f$) (fractional)', fontsize=14)
     ax_fdf_obs.grid(True, alpha=0.3)
+    ax_fdf_obs.text(0.95, 0.95, 'Observed', transform=ax_fdf_obs.transAxes,
+                    ha='right', va='top', fontsize=16, fontweight='bold')
+    ax_fdf_obs.yaxis.tick_right()
+    ax_fdf_obs.yaxis.set_label_position('right')
+    ax_fdf_obs.tick_params(axis='x', labelbottom=False)
     add_ticks_all_sides(ax_fdf_obs)
-
+    
     # ========================================================================
     # Bottom-right: Intrinsic model component FDFs
     # ========================================================================
@@ -614,30 +690,202 @@ def plot_presentation_summary(results: 'FitResults',
                               marker='^', markersize=10, color='black', zorder=15)
 
     ax_fdf_model.axvline(0, color='gray', linestyle=':', linewidth=0.5)
+    ax_fdf_model.set_xlim(-phi_range, phi_range)
     ax_fdf_model.set_yscale('log')
     if max_amp > 0:
         ax_fdf_model.set_ylim(1e-5, min(10.0 * max_amp, 1.0))
     else:
         ax_fdf_model.set_ylim(1e-5, 1e-3)
-    ax_fdf_model.set_xlabel(r'Faraday Depth $\phi$ (rad/m$^2$)')
-    ax_fdf_model.set_ylabel('|F(φ)| (fractional)')
+    ax_fdf_model.set_xlabel(r'Faraday Depth $\phi_f$ (rad/m$^2$)', fontsize=14)
+    ax_fdf_model.set_ylabel(r'|F($\phi_f$)| (fractional)', fontsize=14)
     ax_fdf_model.grid(True, alpha=0.3, which='both')
+    ax_fdf_model.text(0.95, 0.95, 'Model', transform=ax_fdf_model.transAxes,
+                      ha='right', va='top', fontsize=16, fontweight='bold')
+    ax_fdf_model.yaxis.tick_right()
+    ax_fdf_model.yaxis.set_label_position('right')
     add_ticks_all_sides(ax_fdf_model)
-
+    
     # ========================================================================
     # Final layout
     # ========================================================================
     if title is not None:
         fig.suptitle(title, fontsize=14, fontweight='bold')
-
+    
     fig.tight_layout(rect=[0, 0, 1, 0.96] if title else [0, 0, 1, 1])
-
+    fig.subplots_adjust(hspace=0.05)
+    
     if filename:
         out = Path(output_dir) if output_dir else Path.cwd()
         out.mkdir(parents=True, exist_ok=True)
         filepath = out / filename
         fig.savefig(filepath, dpi=150, bbox_inches='tight')
         print(f"Saved presentation plot: {filepath}")
+    
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    
+    return fig
+
+
+# =============================================================================
+# STACKED FDF PLOT
+# =============================================================================
+
+def plot_fdf_stacked(results: 'FitResults',
+                     true_model: Optional['CompositeModel'] = None,
+                     phi_range: Optional[Union[float, Tuple[float, float]]] = None,
+                     n_phi: int = 2048,
+                     weight_type: str = 'variance',
+                     rmsynth_peak_threshold: str = '-10',
+                     rmsynth_finer_threshold: str = '-6',
+                     title: Optional[str] = None,
+                     filename: Optional[str] = None,
+                     output_dir: Optional[Path] = None,
+                     show: bool = False) -> Optional[plt.Figure]:
+    """
+    Two-panel CLEAN FDF figure, stacked vertically with shared Faraday depth and
+    amplitude axes (linear scale).
+
+    Panels:
+    - Top: RM-CLEANed FDF of the data (black) with the CLEAN components (red steps).
+    - Bottom: The same CLEAN FDF and CLEAN components (linear left axis), with the
+      intrinsic model components overlaid (blue) on their own log-scale axis
+      (right): thin / power-law components as point sources (a marker on a stem
+      at phi_rm, height sqrt(a² + b²)) and thick components as their
+      super-Gaussian |F(φ)|. These are the model components themselves, not
+      RM-synthesised or CLEANed, as in the FDF panel of plot_fit_results.
+
+    RM synthesis and CLEAN of the data are run via run_rmsynth_clean.
+
+    Args:
+        results: FitResults object from fitting (supplies the data)
+        true_model: Ground-truth CompositeModel whose components are overlaid on
+                    the bottom panel (no overlay if None)
+        phi_range: Faraday depth window. A scalar for a symmetric window
+                   (±phi_range) or a (phi_min, phi_max) tuple. Auto-computed
+                   (symmetric) from the RMTF FWHM and true-model RMs if None.
+        n_phi: Number of Faraday depth grid points for the thick components
+        weight_type: Weighting for the RMTF FWHM used by the auto phi_range
+        rmsynth_peak_threshold: rmclean1d -c argument (log10 peak fraction)
+        rmsynth_finer_threshold: rmclean1d -w argument (log10 finer mask fraction)
+        title: Optional figure title
+        filename: If provided, save figure to disk
+        output_dir: Directory for saving
+        show: If True, display plot interactively
+
+    Returns:
+        Figure object, or None (with a warning) if RM-Tools produced no CLEAN FDF
+    """
+    setup_publication_quality()
+
+    data = results.setup.data
+
+    obs = run_rmsynth_clean(data, rmsynth_peak_threshold, rmsynth_finer_threshold)
+    if obs['clean'] is None:
+        print('  WARNING: rmclean output not found — skipping stacked FDF plot')
+        return None
+
+    model_components = true_model.components if true_model is not None else []
+
+    # Auto-compute phi_range from RMTF and true-model RMs
+    if phi_range is None:
+        _, rmtf_props = compute_rmtf(data.lambda_sq, np.array([0.0]),
+                                     weight_type=weight_type,
+                                     Q_err=data.Q_err, U_err=data.U_err)
+        fwhm = rmtf_props['expected_fwhm_nominal']
+        rm_vals = []
+        for comp in model_components:
+            if hasattr(comp, 'phi_rm'):
+                rm_vals.append(comp.phi_rm)
+            elif hasattr(comp, 'phi_peak'):
+                rm_vals.append(comp.phi_peak)
+        if rm_vals:
+            rm_extent = max(abs(max(rm_vals) + 2*fwhm), abs(min(rm_vals) - 2*fwhm))
+        else:
+            rm_extent = 0.0
+        phi_range = max(4.0 * fwhm, rm_extent, 100.0)
+
+    if isinstance(phi_range, (tuple, list)):
+        phi_min, phi_max = float(phi_range[0]), float(phi_range[1])
+    else:
+        phi_min, phi_max = -float(phi_range), float(phi_range)
+    phi_grid = np.linspace(phi_min, phi_max, n_phi)
+
+    def in_window(fdf):
+        """(phi, amplitude) of an RM-Tools product restricted to the window, or None."""
+        if fdf is None:
+            return None
+        phi, amp = fdf
+        keep = (phi >= phi_min) & (phi <= phi_max)
+        return phi[keep], amp[keep]
+
+    clean, components = in_window(obs['clean']), in_window(obs['components'])
+
+    # Intrinsic model components: point sources (thin, power-law) and super-Gaussians (thick)
+    point_sources = []   # (phi_rm, amplitude)
+    thick_curves = []    # |F(phi)| on phi_grid
+    for comp in model_components:
+        if isinstance(comp, ThickComponent):
+            thick_curves.append(np.abs(comp.compute_fdf(phi_grid)))
+        elif phi_min <= comp.phi_rm <= phi_max:
+            point_sources.append((comp.phi_rm, np.hypot(comp.a, comp.b)))
+
+    fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(8, 7), sharex=True, sharey=True)
+
+    for ax in (ax_top, ax_bot):
+        if components is not None:
+            ax.plot(*components, drawstyle='steps-mid', color='C3',
+                    linewidth=1.0, alpha=0.8, zorder=8)
+        ax.plot(*clean, color='black', linewidth=1.5, zorder=10)
+
+    # Intrinsic model on its own log-scale axis (right), over the linear CLEAN curves
+    model_amps = [np.max(curve) for curve in thick_curves] + [amp for _, amp in point_sources]
+    if model_amps:
+        ax_model = ax_bot.twinx()
+        ax_model.set_yscale('log')
+        y_upper = min(np.max(model_amps) * 10**0.5, 1.0)
+        y_lower = 1e-5 if y_upper > 1e-4 else y_upper * 1e-3
+        ax_model.set_ylim(y_lower, y_upper)
+        for curve in thick_curves:
+            ax_model.plot(phi_grid, curve, '-', color='C0', linewidth=2.0, zorder=12)
+        for phi_rm, amp in point_sources:
+            ax_model.vlines(phi_rm, y_lower, amp, color='C0', linewidth=2.0, zorder=12)
+            ax_model.plot(phi_rm, amp, marker='^', markersize=10, color='C0', zorder=15)
+        ax_model.set_ylabel(r'Model |F($\phi_f$)| (fractional)', color='C0', fontsize=14)
+        ax_model.tick_params(axis='y', which='both', colors='C0')
+        ax_bot.tick_params(axis='y', which='both', right=False)
+
+    ax_top.text(0.97, 0.95, 'CLEAN', transform=ax_top.transAxes,
+                ha='right', va='top', fontsize=16, fontweight='bold')
+    ax_bot.text(0.97, 0.95, 'CLEAN + model', transform=ax_bot.transAxes,
+                ha='right', va='top', fontsize=16, fontweight='bold')
+
+    y_max = max(np.max(fdf[1]) for fdf in (clean, components)
+                if fdf is not None and len(fdf[1]))
+    for ax in (ax_top, ax_bot):
+        ax.axhline(0, color='gray', linestyle=':', linewidth=0.5)
+        ax.axvline(0, color='gray', linestyle=':', linewidth=0.5)
+        ax.set_ylabel(r'|F($\phi_f$)| (fractional)', fontsize=14)
+        ax.grid(True, alpha=0.3)
+        add_ticks_all_sides(ax)
+    ax_top.set_xlim(phi_min, phi_max)  # axvline(0) above must not stretch the range to include 0
+    ax_top.set_ylim(0.0, 1.1 * y_max)
+    ax_bot.set_xlabel(r'Faraday Depth $\phi_f$ (rad/m$^2$)', fontsize=14)
+
+    if title is not None:
+        fig.suptitle(title, fontsize=14, fontweight='bold')
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96] if title else [0, 0, 1, 1])
+    fig.subplots_adjust(hspace=0.05)
+
+    if filename:
+        out = Path(output_dir) if output_dir else Path.cwd()
+        out.mkdir(parents=True, exist_ok=True)
+        filepath = out / filename
+        fig.savefig(filepath, dpi=150, bbox_inches='tight')
+        print(f"Saved stacked FDF plot: {filepath}")
 
     if show:
         plt.show()
@@ -956,8 +1204,8 @@ def run_test_scenario():
     # Data generation parameters
     FREQ_RANGE = (0.9, 1.65)      # Frequency range in GHz
     N_CHANNELS = 250               # Number of frequency channels
-    SPECTRAL_INDEX = -0.35         # Spectral index (I ∝ ν^α)
-    SNR = 10.0                      # Signal-to-noise ratio
+    SPECTRAL_INDEX = -0.6         # Spectral index (I ∝ ν^α)
+    SNR = 15.0                      # Signal-to-noise ratio
     OSCILLATION = False           # Add sinusoidal oscillation (3 periods over λ²)
     ONLY_I = False                 # True: frac pol constant, False: abs pol constant
 
@@ -1208,6 +1456,12 @@ def run_test_scenario():
             filename="test_presentation.png",
             output_dir=output_dir
         )
+        plot_fdf_stacked(
+            results,
+            true_model=true_model,
+            filename="test_fdf_stacked.png",
+            output_dir=output_dir
+        )
         plot_paper_example(
             results,
             true_model=true_model,
@@ -1314,14 +1568,17 @@ def run_test_scenario():
             truths_cartesian = None
             truths_derived = None
 
-        # --- Fit results plot ---
+        # --- Fit results plot (with RM-Tools CLEAN FDF + components on the FDF panel) ---
+        rmsynth = run_rmsynth_clean(results.setup.data, '-10', '-6')
         plot_fit_results(
             results,
             I_fitter=I_fitter,
             title=None,
             filename="test_fit.png",
             output_dir=output_dir,
-            plot_fdf_posterior_samples=True
+            plot_fdf_posterior_samples=True,
+            clean_fdf=rmsynth['clean'],
+            clean_components=rmsynth['components']
         )
 
         # --- Cartesian corner plot ---
@@ -1393,6 +1650,14 @@ def run_test_scenario():
             filename="test_presentation.png",
             output_dir=output_dir,
             phi_range=40
+        )
+
+        # --- Stacked FDF: CLEAN (top) and CLEAN + ground truth (bottom) ---
+        plot_fdf_stacked(
+            results,
+            true_model=true_model,
+            filename="test_fdf_stacked.png",
+            output_dir=output_dir
         )
 
         # --- Paper example (3-panel publication figure) ---

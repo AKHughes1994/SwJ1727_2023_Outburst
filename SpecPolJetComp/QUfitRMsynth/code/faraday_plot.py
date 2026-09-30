@@ -23,6 +23,11 @@ from faraday_utils import (compute_rmtf, rm_synthesis, compute_polarization_quan
                            ThinComponent, ThinPowerLawComponent, ThickComponent, C_LIGHT)
 from faraday_model import update_model_from_params
 
+# Minimum y-axis span of the Stokes I panel in plot_fit_results, as a fraction of
+# the median |I|. Stops matplotlib autoscaling into the noise for a near-flat
+# spectrum, so a flat I(λ²) actually looks flat. Set to 0 to disable.
+I_MIN_YSPAN_FRAC = 0.5
+
 
 # Publication quality matplotlib settings
 def setup_publication_quality():
@@ -91,6 +96,23 @@ def add_ticks_all_sides(ax):
 def lambda_sq_to_freq_ghz(lambda_sq: np.ndarray) -> np.ndarray:
     """Convert wavelength squared (m²) to frequency (GHz)."""
     return (C_LIGHT / np.sqrt(lambda_sq + 1e-8) / 1e9)
+
+
+def widen_flat_I_ylim(ax, I: np.ndarray, I_err: Optional[np.ndarray] = None):
+    """
+    Widen a Stokes I panel's y-range when the spectrum is flat.
+
+    Keeps the data (with errors) in view but enforces a span of at least
+    I_MIN_YSPAN_FRAC * median|I|, centred on the data, so a flat I(λ²) looks
+    flat instead of being autoscaled into the noise. No-op for steeper spectra.
+    """
+    err = 0.0 if I_err is None else I_err
+    lo = np.nanmin(I - err)
+    hi = np.nanmax(I + err)
+    min_span = I_MIN_YSPAN_FRAC * np.nanmedian(np.abs(I))
+    if np.isfinite(min_span) and hi - lo < min_span:
+        mid = 0.5 * (lo + hi)
+        ax.set_ylim(mid - 0.5 * min_span, mid + 0.5 * min_span)
 
 
 def plot_data_diagnostic(data: PolarizationData, 
@@ -183,14 +205,16 @@ def plot_data_diagnostic(data: PolarizationData,
                                color='red', alpha=0.2, zorder=1,
                                label='Fit uncertainty')
         
+        widen_flat_I_ylim(ax, data.I, data.I_err)
+
         ax.set_ylabel('Stokes I (Jy)', fontsize=12)
         ax.legend(loc='best', framealpha=0.9)
     else:
-        ax.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)', 
+        ax.text(0.5, 0.5, 'No Stokes I data\n(fractional mode)',
                ha='center', va='center', transform=ax.transAxes,
                fontsize=12, color='gray')
         ax.set_ylabel('Stokes I (Jy)', fontsize=12)
-    
+
     ax.set_xlabel('λ² (m²)', fontsize=12)
     ax.grid(True, alpha=0.3)
     add_ticks_all_sides(ax)
@@ -604,6 +628,8 @@ def plot_fit_results(results: 'FitResults',
                 ax_I.fill_between(lsq_plot, I_fit - I_fit_err, I_fit + I_fit_err,
                                  color='C0', alpha=0.2, zorder=1)
         
+        widen_flat_I_ylim(ax_I, data.I, data.I_err)
+
         ax_I.set_ylabel('Stokes I (Jy)', fontsize=13)
         ax_I.legend(loc='best', framealpha=0.9)
     else:
@@ -2087,16 +2113,7 @@ def plot_flagging_diagnostic(raw_data: Dict,
     
     # Color scheme
     colors = {'I': 'black', 'Q': 'blue', 'U': 'red', 'V': 'green'}
-
-    # Linear polarization amplitude P = sqrt(Q²+U²), overlaid translucently on
-    # both the Q and U panels (and its spectral-baseline fit, if 'QU' clipping
-    # was applied — see flag_channels()).
-    P_raw = None
-    if 'Q' in raw_data and 'U' in raw_data:
-        Q_raw = np.asarray(raw_data['Q'])
-        U_raw = np.asarray(raw_data['U'])
-        P_raw = np.sqrt(Q_raw**2 + U_raw**2)
-
+    
     for idx, stokes in enumerate(stokes_params):
         ax = axes[idx]
         
@@ -2131,33 +2148,20 @@ def plot_flagging_diagnostic(raw_data: Dict,
                    color=colors[stokes], alpha=0.8, markersize=5,
                    label='Kept', zorder=3)
         
-        # Overlay P = sqrt(Q²+U²) translucently on the Q and U panels
-        if stokes in ('Q', 'U') and P_raw is not None:
-            ax.plot(lambda_sq, P_raw, marker='.', linestyle='', color='purple',
-                   alpha=0.5, markersize=5, label='P = √(Q²+U²)', zorder=1.5)
-
         # Plot spectral baseline polynomial fit (for any Stokes parameter that was fit)
         if 'Spectral baseline clipping' in flagging_info.get('flag_counts', {}):
             spectral_clip_info = flagging_info['flag_counts']['Spectral baseline clipping']
             if 'fit' in spectral_clip_info and spectral_clip_info['fit'] is not None:
                 fits_dict = spectral_clip_info['fit']
-
+                
                 # Check if this Stokes parameter has a fit
                 if stokes in fits_dict:
                     fit = fits_dict[stokes]
                     # Evaluate polynomial: X = poly(freq_normalized)
                     freq_norm = (freq_hz - fit['freq_mean']) / fit['freq_std']
                     X_model = np.polyval(fit['coef'], freq_norm)
-                    ax.plot(lambda_sq, X_model, '-', color='orange', linewidth=2.5,
+                    ax.plot(lambda_sq, X_model, '-', color='orange', linewidth=2.5, 
                            alpha=0.8, label=f'Spectral baseline ({stokes})', zorder=2)
-
-                # Overlay the P = sqrt(Q²+U²) fit (if 'QU' spectral clipping was applied)
-                if stokes in ('Q', 'U') and 'QU' in fits_dict:
-                    qu_fit = fits_dict['QU']
-                    freq_norm_qu = (freq_hz - qu_fit['freq_mean']) / qu_fit['freq_std']
-                    P_model = np.polyval(qu_fit['coef'], freq_norm_qu)
-                    ax.plot(lambda_sq, P_model, '--', color='purple', linewidth=2.0,
-                           alpha=0.5, label='Spectral baseline (P)', zorder=1.5)
         
         # Highlight explicitly flagged frequency regions (RFI bands specified by user)
         # Individual channel flags are shown as 'x' markers only, no shading
