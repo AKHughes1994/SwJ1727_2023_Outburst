@@ -154,10 +154,10 @@ For models containing a thin screen, the first `S` component is constrained to t
 
 ```python
 PHI_ISM   = -0.5   # Galactic ISM Faraday depth (rad/m²)
-PHI_SYS   = -0.3   # Systematic instrumental RM offset (rad/m²)
-iono_rm   =  0.0   # Ionospheric contribution from Spinifex; set per-epoch
+PHI_SYS   = -0.3   # Systematic offset of the Spinifex iono RM (rad/m²): true iono = iono_rm - PHI_SYS
+iono_rm   =  0.0   # Ionospheric RM from Spinifex; set per-epoch
 
-phi_center = PHI_ISM + PHI_SYS + iono_rm
+phi_center = PHI_ISM + (iono_rm - PHI_SYS)
 
 ism_phi_prior = ('truncated_gaussian',
                  phi_center,          # mean

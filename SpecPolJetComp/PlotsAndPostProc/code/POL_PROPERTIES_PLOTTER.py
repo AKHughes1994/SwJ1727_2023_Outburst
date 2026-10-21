@@ -79,7 +79,7 @@ ALL_JSON_PATHS = [
 # Applied to the Bayesian phi_rm from the results JSON (the only Faraday depth
 # available here; this differs from the RMclean peak phi used in other scripts).
 SPINIFEX_J1727_SOURCE = 'SwiftJ1727'
-SPINIFEX_OFFSET       = -0.3   # rad/m^2 additional offset after spinifex subtraction
+PHI_SYS               = -0.3   # rad/m^2 systematic offset of spinifex RM: true iono = iono_rm - PHI_SYS
 SPINIFEX_SYS_ERR      = 0.5    # rad/m^2 systematic added in quadrature to corrected errors
 
 # --- Time range --------------------------------------------------------------
@@ -404,15 +404,15 @@ def parse_epoch(json_path):
         else:
             sphi = sphi_lo = sphi_hi = None
 
-        # --- Spinifex correction for phi_rm (main source epochs only) --------
+        # --- Spinifex correction for phi_rm (core and ejecta epochs) --------
         iso_date_str = Time(mjd, format='mjd').iso[:10]
         phi_corr       = phi
         phi_lo_corr    = phi_lo
         phi_hi_corr    = phi_hi
         has_iono_corr  = False
-        if not is_ejecta and not np.isnan(phi) and iso_date_str in spinifex_by_date:
+        if not np.isnan(phi) and iso_date_str in spinifex_by_date:
             iono_rm, iono_err = spinifex_by_date[iso_date_str]
-            phi_corr    = phi - iono_rm + SPINIFEX_OFFSET
+            phi_corr    = phi - (iono_rm - PHI_SYS)
             phi_lo_corr = np.sqrt(phi_lo**2 + iono_err**2 + SPINIFEX_SYS_ERR**2)
             phi_hi_corr = np.sqrt(phi_hi**2 + iono_err**2 + SPINIFEX_SYS_ERR**2)
             has_iono_corr = True

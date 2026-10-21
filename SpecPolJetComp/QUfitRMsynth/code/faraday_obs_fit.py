@@ -200,9 +200,9 @@ SAMPLER = 'dynamic'
 FLAGGING_CONFIG_FILE = Path(__file__).parent / 'flagging_config.toml'
 
 # ISM RM constraint mode
-CONSTRAIN_ISM_RM = True        # Enable to pin first S (or P) component's phi_rm to ISM+sys+iono
+CONSTRAIN_ISM_RM = True        # Enable to pin first S (or P) component's phi_rm to ISM + (iono - sys)
 PHI_ISM          = -0.5          # Expected Galactic ISM Faraday depth (rad/m²)
-PHI_SYS          = -0.3          # Systematic RM offset to add (rad/m²)
+PHI_SYS          = -0.3          # Systematic offset of the spinifex iono RM (rad/m²): true iono = RM_iono - PHI_SYS
 PHI_ISM_SIGMA    = +0.65          # Gaussian std for truncated prior (rad/m²)
 PHI_ISM_RANGE    = 3.5 * PHI_ISM_SIGMA  # Truncation half-width; set 0 for a fixed prior
 IONO_LOC         = Path(__file__).parent.parent / 'files' / 'spinifex_iono'  # spinifex dir or single file; None → iono_rm = 0
@@ -566,7 +566,7 @@ if CONSTRAIN_ISM_RM:
             iono_rm = 0.0
             print("CONSTRAIN_ISM_RM: IONO_LOC not set — using iono_rm = 0.0")
 
-        phi_center = PHI_ISM + PHI_SYS + iono_rm
+        phi_center = PHI_ISM + (iono_rm - PHI_SYS)
         if PHI_ISM_RANGE > 0:
             ism_phi_prior = ('truncated_gaussian', phi_center, PHI_ISM_SIGMA,
                              phi_center - PHI_ISM_RANGE, phi_center + PHI_ISM_RANGE)
