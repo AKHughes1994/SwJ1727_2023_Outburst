@@ -214,7 +214,7 @@ setup = FitSetup(
 )
 ```
 
-`enforce_ordering=True` (recommended) imposes `φ_rm(S1) < φ_rm(S2) < …` (and similarly for `T`, `P` components) to break the label-switching degeneracy when multiple components of the same type are present. This is implemented via order-statistics in the prior transform, so there is no likelihood penalty.
+`enforce_ordering=True` (recommended) imposes `φ_rm(S1) ≤ φ_rm(S2) ≤ …` (and similarly for `T`, `P` components) to break the label-switching degeneracy between interchangeable components — those of the same type whose priors are identical in every parameter. It is implemented exactly via order statistics in the prior transform, so there is no likelihood penalty. A component with its own prior (e.g. `S1` pinned to the ISM RM) is already identified by that prior and is left out of the ordering, so the other components can sit on either side of it.
 
 ---
 

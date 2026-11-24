@@ -864,106 +864,107 @@ def ordered_phi_truncated_gaussian(u_block: np.ndarray, mu: float, sigma: float,
     return stats.truncnorm.ppf(v, a, b, loc=mu, scale=sigma)
 
 
-def _analyze_ordering_requirements(model: CompositeModel, priors: Dict, 
+def _exchangeable_prior_view(comp_priors: Dict, comp_type, tie_phi_rm: bool) -> Dict:
+    """
+    The part of a component's prior that decides whether it is interchangeable
+    with another component of the same type. A per-component phi_rm entry is
+    ignored when phi_rm is tied (the shared 'tied_phi_rm' prior is used instead).
+    """
+    if tie_phi_rm and comp_type in (ThinComponent, ThinPowerLawComponent):
+        return {k: v for k, v in comp_priors.items() if k != 'phi_rm'}
+    return comp_priors
+
+
+def _analyze_ordering_requirements(model: CompositeModel, priors: Dict,
                                    tie_phi_rm: bool = False) -> Dict:
     """
-    Analyze which parameter groups need ordering and how to implement it.
-    
-    Groups parameters by (component_type, param_name) to ensure ordering only
-    applies within exchangeable families. Returns single source of truth for
-    all ordering logic.
-    
+    Find the groups of interchangeable components and how to order each one.
+
+    Ordering only removes label switching, and label switching only exists
+    between components whose priors are identical in every parameter (same
+    type, same p0/psi_0 spec, same phi/sigma_phi/N/beta priors). Each such group
+    is ordered by its Faraday-depth parameter (beta for tied power-law
+    components) with an exact order-statistics transform in the prior. A
+    component whose prior differs from the others of its type (e.g. S1 pinned
+    to the ISM RM) is already identified by that prior and is never ordered,
+    so no configuration of the other components is excluded.
+
     Args:
         model: CompositeModel
         priors: Prior dictionary
         tie_phi_rm: If True, phi_rm is tied (use beta for ThinPowerLaw ordering)
-        
+
     Returns:
-        Dictionary with ordering configuration keyed by (component_type, param_name):
+        Dictionary keyed by (component_type, param_name, member_component_indices):
         {
-            (ThinComponent, 'phi_rm'): {'needs_ordering': True, 'method': 'uniform', ...},
-            (ThinPowerLawComponent, 'beta'): {'needs_ordering': True, 'method': 'gaussian', ...},
+            (ThinComponent, 'phi_rm', (1, 2)): {'needs_ordering': True, 'method': 'uniform',
+                                                'params': {...}, 'components': [1, 2]},
+            (ThinComponent, 'phi_rm', (0,)):   {'needs_ordering': False, 'method': None,
+                                                'params': None, 'components': [0]},
             ...
         }
     """
-    # Collect priors grouped by (component_type, param_name)
-    param_groups = {}  # {(comp_type, param_name): [prior1, prior2, ...]}
-    
+    # Interchangeable groups: [comp_type, param_name, prior_view, member indices]
+    groups = []
+
     for i, comp in enumerate(model.components):
         comp_key = comp.name if comp.name else f'component_{i}'
         comp_type = type(comp)
-        
+
         if comp_key in priors:
             comp_priors = priors[comp_key]
         elif f'component_{i}' in priors:
             comp_priors = priors[f'component_{i}']
         else:
             continue
-        
-        # Determine orderable parameter for this component type
-        # B) Beta ordering conditional on tie_phi_rm
+
+        # Orderable parameter for this component type (beta when phi_rm is tied)
         if comp_type == ThinComponent:
-            orderable = ['phi_rm'] if not tie_phi_rm else []
+            param_name = None if tie_phi_rm else 'phi_rm'
         elif comp_type == ThinPowerLawComponent:
-            orderable = ['phi_rm'] if not tie_phi_rm else ['beta']
+            param_name = 'beta' if tie_phi_rm else 'phi_rm'
         elif comp_type == ThickComponent:
-            orderable = ['phi_peak']
+            param_name = 'phi_peak'
         else:
-            orderable = []
-        
-        for param_name in orderable:
-            if param_name in comp_priors:
-                group_key = (comp_type, param_name)
-                if group_key not in param_groups:
-                    param_groups[group_key] = []
-                param_groups[group_key].append(comp_priors[param_name])
-    
-    # Analyze each group
+            param_name = None
+        if param_name is None or param_name not in comp_priors:
+            continue
+
+        view = _exchangeable_prior_view(comp_priors, comp_type, tie_phi_rm)
+        for group in groups:
+            if group[0] is comp_type and group[1] == param_name and group[2] == view:
+                group[3].append(i)
+                break
+        else:
+            groups.append([comp_type, param_name, view, [i]])
+
     config = {}
-    
-    for (comp_type, param_name), prior_list in param_groups.items():
-        if len(prior_list) <= 1:
-            config[(comp_type, param_name)] = {
-                'needs_ordering': False, 'method': None, 'params': None
-            }
-        else:
-            config[(comp_type, param_name)] = {
-                'needs_ordering': True, 'method': None, 'params': None
-            }
-            
-            # Check if all identical
-            first = prior_list[0]
-            if not all(p == first for p in prior_list):
-                config[(comp_type, param_name)]['method'] = 'likelihood'
-                continue
-            
-            prior_type, params = validate_prior_spec(first)
-            
-            # C) Extended order-statistics support
+    for comp_type, param_name, view, members in groups:
+        prior_type, params = validate_prior_spec(view[param_name])
+        entry = {'needs_ordering': False, 'method': None, 'params': None,
+                 'components': members}
+
+        # Identical fixed values leave nothing to order
+        if len(members) > 1 and prior_type != 'fixed':
+            entry['needs_ordering'] = True
+            entry['method'] = prior_type
             if prior_type == 'uniform':
-                config[(comp_type, param_name)]['method'] = 'uniform'
-                config[(comp_type, param_name)]['params'] = {
-                    'phi_min': params[0], 'phi_max': params[1]
-                }
+                entry['params'] = {'phi_min': params[0], 'phi_max': params[1]}
             elif prior_type == 'gaussian':
-                config[(comp_type, param_name)]['method'] = 'gaussian'
-                config[(comp_type, param_name)]['params'] = {
-                    'mu': params[0], 'sigma': params[1]
-                }
+                entry['params'] = {'mu': params[0], 'sigma': params[1]}
             elif prior_type == 'log_uniform':
-                config[(comp_type, param_name)]['method'] = 'log_uniform'
-                config[(comp_type, param_name)]['params'] = {
-                    'pmin': params[0], 'pmax': params[1]
-                }
+                entry['params'] = {'pmin': params[0], 'pmax': params[1]}
             elif prior_type == 'truncated_gaussian':
-                config[(comp_type, param_name)]['method'] = 'truncated_gaussian'
-                config[(comp_type, param_name)]['params'] = {
-                    'mu': params[0], 'sigma': params[1],
-                    'pmin': params[2], 'pmax': params[3]
-                }
+                entry['params'] = {'mu': params[0], 'sigma': params[1],
+                                   'pmin': params[2], 'pmax': params[3]}
             else:
-                config[(comp_type, param_name)]['method'] = 'likelihood'
-    
+                raise ValueError(
+                    f"No order-statistics transform for prior type '{prior_type}' "
+                    f"({comp_type.__name__}.{param_name})"
+                )
+
+        config[(comp_type, param_name, tuple(members))] = entry
+
     return config
 
 
@@ -1119,19 +1120,13 @@ class PriorTransform:
         self.model = model
         self.tie_phi_rm = tie_phi_rm
         
-        # Analyze ordering requirements
+        # Analyze ordering requirements (identical-prior groups only, always
+        # applied exactly via order statistics in __call__)
         if enforce_ordering:
             self.ordering_config = _analyze_ordering_requirements(model, priors, tie_phi_rm)
-            
-            # Check if ANY parameter group needs likelihood enforcement
-            self.needs_likelihood_ordering = any(
-                cfg['needs_ordering'] and cfg['method'] == 'likelihood'
-                for cfg in self.ordering_config.values()
-            )
         else:
             self.ordering_config = {}
-            self.needs_likelihood_ordering = False
-        
+
         # Build index maps for ordered parameters (for efficient lookup in __call__)
         self._build_ordering_indices()
     
@@ -1139,8 +1134,8 @@ class PriorTransform:
         """
         Build index maps for parameters that need ordering.
         
-        Groups by (component_type, param_name) to ensure ordering only within
-        exchangeable families. Creates self.ordering_indices = {(type, param): [indices]}
+        One entry per ordering group from _analyze_ordering_requirements, keyed
+        (type, param, member components): self.ordering_indices = {group_key: [free indices]}
         """
         self.ordering_indices = {}
         
@@ -1160,10 +1155,10 @@ class PriorTransform:
             comp = self.model.components[comp_idx]
             comp_type = type(comp)
             
-            # Check if this (comp_type, param_name) pair is in our ordering config
-            group_key = (comp_type, param_name)
-            if group_key in self.ordering_indices:
-                self.ordering_indices[group_key].append(i)
+            # Add it to the ordering group (if any) that contains this component
+            for group_key in self.ordering_indices:
+                if group_key[:2] == (comp_type, param_name) and comp_idx in group_key[2]:
+                    self.ordering_indices[group_key].append(i)
     
     def __call__(self, u: np.ndarray) -> np.ndarray:
         """
@@ -1374,8 +1369,8 @@ class PriorTransform:
         for full_idx, value in self.fixed_params.items():
             params_full[full_idx] = value
         
-        # NOTE: Ordering constraints using order-statistics are already satisfied by construction.
-        # Only groups with 'likelihood' enforcement method need checking in log_likelihood.
+        # NOTE: Ordering (order statistics) is satisfied by construction, so the
+        # likelihood never needs to check it.
         # prior_transform should always return valid finite values.
         # Returning NaNs can corrupt dynesty's internal geometry.
         
@@ -1524,30 +1519,31 @@ class FitSetup:
             # Check if any ordering is needed
             any_ordering = any(cfg['needs_ordering'] for cfg in ordering_config.values())
             
-            if any_ordering:
+            # Components left unordered because their prior differs from the
+            # others of the same type (the prior already identifies them)
+            n_same_type = {}
+            for comp_type, param_name, members in ordering_config:
+                n_same_type[comp_type] = n_same_type.get(comp_type, 0) + len(members)
+            unordered = [self.component_names[members[0]]
+                         for comp_type, param_name, members in ordering_config
+                         if len(members) == 1 and n_same_type[comp_type] > 1]
+
+            if any_ordering or unordered:
                 print("\n" + "="*70)
                 print("ORDERING STRATEGY")
                 print("="*70)
-                
-                for group_key, config in ordering_config.items():
+
+                for (comp_type, param_name, members), config in ordering_config.items():
                     if config['needs_ordering']:
-                        comp_type, param_name = group_key
-                        method = config['method']
-                        
-                        # Format display name
-                        type_name = comp_type.__name__
-                        display = f"  {type_name}.{param_name}"
-                        
-                        if method in ['uniform', 'gaussian', 'log_uniform', 'truncated_gaussian']:
-                            print(f"{display}: Order-statistics prior applied")
-                            print(f"    Method: {method} (mathematically exact)")
-                            print(f"    Location: prior transform (efficient)")
-                        else:
-                            print(f"{display}: Likelihood enforcement")
-                            print(f"    Ordering will be enforced via likelihood because priors differ across")
-                            print(f"    components or are not supported for order-statistics")
-                            print(f"    Location: likelihood (less efficient, more complex geometry)")
-                
+                        chain = ' <= '.join(f"{self.component_names[m]}.{param_name}"
+                                            for m in members)
+                        print(f"  {chain}: order-statistics prior ({config['method']}), "
+                              f"exact, applied in the prior transform")
+
+                if unordered:
+                    print(f"  Not ordered (prior differs from the other components of "
+                          f"its type, so it is already identifiable): {', '.join(unordered)}")
+
                 print("="*70)
     
     def _setup_power_law_reference(self):
@@ -1729,71 +1725,12 @@ class FitSetup:
         if len(self.free_param_indices) == 0:
             raise ValueError("All parameters are fixed - nothing to fit!")
         
-        # Validate fixed RM ordering if enforce_ordering is True
-        if self.enforce_ordering:
-            self._validate_fixed_rm_ordering(param_info)
-        
         # Convert fixed sigma_phi from phi_eff to sigma_phi in effective_width_mode
         self._convert_fixed_sigma_phi_in_effective_width_mode(param_info)
         
         # Update dimensionality (dynesty samples only free parameters)
         self.ndim = len(self.free_param_indices)
         self.free_param_names = [self.param_names[i] for i in self.free_param_indices]
-    
-    def _validate_fixed_rm_ordering(self, param_info):
-        """
-        Check that fixed parameter values respect ordering constraints per group.
-        
-        Only validates groups that actually enforce ordering. Uses non-decreasing
-        constraint (<=) to match runtime _check_ordering behavior. Ignores tied_phi_rm
-        (component_idx=None) which has no component index.
-        
-        Args:
-            param_info: List of parameter info dicts from _build_param_info
-            
-        Raises:
-            ValueError: If fixed values violate ordering constraint
-        """
-        # Get ordering groups from prior transform config
-        if not hasattr(self, 'prior_transform') or not hasattr(self.prior_transform, 'ordering_config'):
-            return  # Can't validate without ordering config
-        
-        ordering_config = self.prior_transform.ordering_config
-        
-        # For each group that needs ordering, collect fixed values
-        for group_key, config in ordering_config.items():
-            if not config.get('needs_ordering', False):
-                continue
-            
-            comp_type, param_name = group_key
-            fixed_values = []
-            
-            # Collect fixed values for this group
-            for i, pinfo in enumerate(param_info):
-                if (pinfo['is_fixed'] and 
-                    pinfo['param_name'] == param_name and
-                    pinfo['component_idx'] is not None):  # Skip tied_phi_rm
-                    
-                    # Check component type matches
-                    comp_idx = pinfo['component_idx']
-                    if type(self.model.components[comp_idx]) == comp_type:
-                        fixed_values.append((i, pinfo['fixed_value'], comp_idx))
-            
-            # Check ordering (non-decreasing, by component index)
-            if len(fixed_values) > 1:
-                fixed_values.sort(key=lambda x: x[2])  # Sort by component index
-                
-                for j in range(len(fixed_values) - 1):
-                    idx1, val1, comp1 = fixed_values[j]
-                    idx2, val2, comp2 = fixed_values[j + 1]
-                    
-                    if val1 > val2:  # Non-decreasing: allow equality
-                        raise ValueError(
-                            f"Fixed {comp_type.__name__}.{param_name} values violate ordering!\n"
-                            f"  {self.param_names[idx1]} = {val1:.3g}\n"
-                            f"  {self.param_names[idx2]} = {val2:.3g}\n"
-                            f"  Required: {val1:.3g} <= {val2:.3g}"
-                        )
     
     def _convert_fixed_sigma_phi_in_effective_width_mode(self, param_info):
         """
@@ -1875,14 +1812,13 @@ class FitSetup:
         Compute log-likelihood for given parameters.
         
         Expands free parameters to full parameter space if needed,
-        enforces ordering constraints (returns -inf if violated),
         then calls the module-level log_likelihood function.
-        
+
         Args:
             params: Parameter values (n_free dimensions from dynesty)
-            
+
         Returns:
-            Log-likelihood value (-inf if ordering violated or model invalid)
+            Log-likelihood value (-inf if the model is invalid)
         """
         # If there are fixed parameters, expand to full space
         if len(self.fixed_params) > 0:
@@ -1898,13 +1834,8 @@ class FitSetup:
             
             params = params_full
         
-        # Enforce ordering constraints ONLY if likelihood enforcement is needed
-        # (Parameters using order-statistics are already guaranteed to be ordered)
-        if self.enforce_ordering and self.prior_transform.needs_likelihood_ordering:
-            if not _check_ordering(params, self.prior_transform.param_info_full, 
-                                  self.model, self.prior_transform.ordering_config):
-                return -np.inf
-        
+        # Ordering is built into the prior transform (order statistics), so no
+        # ordering check is needed here
         return log_likelihood(params, self.model, self.data, self.param_names,
                             p0_physical_max=self.p0_physical_max,
                             lambda_sq_ref=self.lambda_sq_ref)
@@ -2103,70 +2034,6 @@ def _transform_parameter(u: float, prior_spec: Tuple) -> float:
     
     else:
         raise ValueError(f"Unknown prior type: {prior_type}")
-
-
-def _check_ordering(params: np.ndarray, 
-                   param_info: List[Dict],
-                   model: CompositeModel,
-                   ordering_config: Dict = None) -> bool:
-    """
-    Check if component ordering constraints are satisfied.
-    
-    Only enforces ordering for parameter groups where ordering_config indicates
-    'likelihood' method. Groups using order-statistics in prior transform are
-    already ordered by construction.
-    
-    Uses ordering_config as single source of truth for what needs checking.
-    
-    Args:
-        params: Physical parameter values
-        param_info: Parameter information
-        model: CompositeModel
-        ordering_config: Ordering configuration from PriorTransform (required)
-        
-    Returns:
-        True if ordering satisfied, False otherwise
-    """
-    if ordering_config is None:
-        return True
-    
-    # Determine which groups need likelihood enforcement
-    groups_to_check = {}  # {(comp_type, param_name): should_enforce}
-    
-    for group_key, config in ordering_config.items():
-        needs_ordering = config.get('needs_ordering', False)
-        method = config.get('method')
-        groups_to_check[group_key] = (needs_ordering and method == 'likelihood')
-    
-    # Early return if no enforcement needed
-    if not any(groups_to_check.values()):
-        return True
-    
-    # Collect parameter values for each group that needs checking
-    group_values = {gk: [] for gk, check in groups_to_check.items() if check}
-    
-    # Scan components and collect values
-    for i, comp in enumerate(model.components):
-        comp_type = type(comp)
-        
-        # Check each group that needs enforcement
-        for (check_type, param_name), values_list in group_values.items():
-            # Only collect if component type matches
-            if comp_type == check_type:
-                # Find the parameter in param_info
-                for j, info in enumerate(param_info):
-                    if info['component_idx'] == i and info['param_name'] == param_name:
-                        values_list.append(params[j])
-                        break
-    
-    # Check ordering for each group (non-decreasing: allow equality)
-    for group_key, values in group_values.items():
-        if len(values) > 1:
-            if not all(values[i] <= values[i+1] for i in range(len(values)-1)):
-                return False
-    
-    return True
-
 
 
 # =============================================================================
